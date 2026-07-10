@@ -41,7 +41,7 @@ is_chat_ref() {
       case "$username" in *[!A-Za-z0-9_]*) return 1 ;; esac
       ;;
     *)
-      [ "$value" -gt 0 ]
+      return 1
       ;;
   esac
 }
@@ -54,7 +54,7 @@ validate_source_refs() {
 
 usage() {
   cat <<'EOF'
-用法：sudo sh install.sh [--version 0.1.15] [--update]
+用法：sudo sh install.sh [--version 0.1.16] [--update]
 
   --version VERSION  安装指定版本，默认安装GitHub最新稳定版
   --update           保留现有.env和data并更新程序
@@ -179,34 +179,33 @@ fi
 
 prompt_value() {
   prompt=$1
-  secret=${2:-0}
   value=""
   while [ -z "$value" ]; do
     printf '%s' "$prompt" > /dev/tty
-    if [ "$secret" -eq 1 ]; then
-      old_stty=$(stty -g < /dev/tty)
-      stty -echo < /dev/tty
-      IFS= read -r value < /dev/tty || value=""
-      stty "$old_stty" < /dev/tty
-      printf '\n' > /dev/tty
-    else
-      IFS= read -r value < /dev/tty || value=""
-    fi
+    IFS= read -r value < /dev/tty || value=""
   done
   printf '%s' "$value"
 }
 
 ENV_FILE="$TMP_DIR/new.env"
 if [ "$KEEP_ENV" -eq 0 ]; then
-  BOT_TOKEN_VALUE=${BOT_TOKEN:-$(prompt_value '请输入BOT_TOKEN：' 1)}
-  OWNER_USER_ID_VALUE=${OWNER_USER_ID:-$(prompt_value '请输入OWNER_USER_ID：')}
-  REPORT_CHAT_ID_VALUE=${REPORT_CHAT_ID:-$(prompt_value '请输入REPORT_CHAT_ID：')}
-  SOURCE_CHANNEL_IDS_VALUE=${SOURCE_CHANNEL_IDS:-$(prompt_value '请输入SOURCE_CHANNEL_IDS，多个用逗号分隔：')}
+  BOT_TOKEN_VALUE=${BOT_TOKEN:-$(prompt_value '[1/4]机器人Token
+从@BotFather获取；输入内容会显示，例如123456789:AAExampleToken。
+请输入：')}
+  OWNER_USER_ID_VALUE=${OWNER_USER_ID:-$(prompt_value '[2/4]主人用户ID
+填写你自己的Telegram数字ID，例如123456789。
+请输入：')}
+  REPORT_CHAT_ID_VALUE=${REPORT_CHAT_ID:-$(prompt_value '[3/4]报表群ID
+填写接收日报、周报和月报的群ID，通常以-100开头。
+请输入：')}
+  SOURCE_CHANNEL_IDS_VALUE=${SOURCE_CHANNEL_IDS:-$(prompt_value '[4/4]源频道ID
+填写Bot需要监听的频道ID，通常以-100开头；多个用英文逗号分隔。
+请输入：')}
   case "$BOT_TOKEN_VALUE" in *:*) ;; *) die "BOT_TOKEN格式不正确" ;; esac
   case "$OWNER_USER_ID_VALUE" in ''|*[!0-9]*) die "OWNER_USER_ID必须是正整数" ;; esac
   [ "$OWNER_USER_ID_VALUE" -gt 0 ] || die "OWNER_USER_ID必须大于0"
-  is_chat_ref "$REPORT_CHAT_ID_VALUE" || die "REPORT_CHAT_ID格式不正确"
-  validate_source_refs "$SOURCE_CHANNEL_IDS_VALUE" || die "SOURCE_CHANNEL_IDS格式不正确"
+  is_chat_ref "$REPORT_CHAT_ID_VALUE" || die "报表群ID格式不正确：请填写负数群ID或群用户名"
+  validate_source_refs "$SOURCE_CHANNEL_IDS_VALUE" || die "源频道ID格式不正确：请填写负数频道ID或频道用户名，多个用英文逗号分隔"
   umask 077
   cat > "$ENV_FILE" <<EOF
 BOT_TOKEN=$BOT_TOKEN_VALUE

@@ -1,6 +1,6 @@
 # SlowLink Assistant Bot
 
-当前版本：`0.1.15`
+当前版本：`0.1.16`
 
 这是一个独立的 Telegram Bot API 项目，和主 SlowLink 分开运行。它不接主 SlowLink，不做去重、不跑规则、不生成链接，只负责把指定源频道的新消息原样复制到你的私聊，并在固定群里发送日报、周报、月报。
 
@@ -22,12 +22,21 @@
 curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/install.sh | sudo bash
 ```
 
-安装程序会自动安装Docker、下载最新稳定Release、校验SHA-256，并交互填写Bot配置。重复执行会保留`.env`和`data/`。
+安装程序会自动安装Docker、下载最新稳定Release、校验SHA-256，并按四步中文提示填写Bot配置。重复执行会保留`.env`和`data/`。
+
+安装时依次填写：
+
+1. 机器人Token：从`@BotFather`获取，输入内容会直接显示。
+2. 主人用户ID：你自己的Telegram数字ID。
+3. 报表群ID：接收日报、周报和月报的群，通常以`-100`开头。
+4. 源频道ID：Bot监听的频道，通常以`-100`开头；多个频道用英文逗号分隔。
+
+报表群和源频道也可以填写Telegram用户名，但不能填写`1`这类正数。
 
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/install.sh | sudo bash -s -- --version 0.1.15
+curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/install.sh | sudo bash -s -- --version 0.1.16
 ```
 
 当前公开仓库无需配置GitHub Token。

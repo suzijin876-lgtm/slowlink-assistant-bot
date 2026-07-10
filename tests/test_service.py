@@ -192,6 +192,31 @@ class AssistantServiceTests(unittest.TestCase):
         stats = self.store.stats_between(datetime(2026, 7, 10, 0, 0, tzinfo=TZ), datetime(2026, 7, 11, 0, 0, tzinfo=TZ))
         self.assertEqual(stats.success_count, 1)
 
+    def test_channel_pin_service_message_is_ignored(self):
+        self.make_service()
+        update = {
+            "update_id": 3,
+            "channel_post": {
+                "message_id": 57,
+                "date": int(datetime(2026, 7, 10, 12, 0, tzinfo=TZ).timestamp()),
+                "chat": {"id": -1001, "type": "channel", "title": "Source"},
+                "pinned_message": {"message_id": 55, "text": "original"},
+            },
+        }
+
+        with self.assertLogs("assistant_bot.service", level="INFO") as captured:
+            self.service.handle_update(update)
+
+        self.assertEqual(self.api.copied, [])
+        self.assertIsNone(self.store.get_moderation_post("-1001", 57))
+        stats = self.store.stats_between(
+            datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
+            datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+        )
+        self.assertEqual(stats.success_count, 0)
+        self.assertEqual(stats.failure_count, 0)
+        self.assertIn("跳过频道置顶通知", "\n".join(captured.output))
+
     def test_channel_post_from_unlisted_source_is_ignored(self):
         self.make_service()
         update = {

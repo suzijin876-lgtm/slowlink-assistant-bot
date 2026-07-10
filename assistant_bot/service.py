@@ -117,6 +117,9 @@ class AssistantService:
         message_id = int(message.get("message_id") or 0)
         if not source_chat_id or not message_id:
             return
+        if "pinned_message" in message:
+            LOG.info("跳过频道置顶通知：来源=%s 消息=%s", source_title, message_id)
+            return
 
         try:
             posted_at = datetime.fromtimestamp(int(message.get("date") or 0), self.tz)

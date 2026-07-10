@@ -1,6 +1,6 @@
 # 运维说明
 
-当前版本：`0.1.15`
+当前版本：`0.1.16`
 
 ## 一键安装
 
@@ -11,6 +11,8 @@ curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-
 ```
 
 当前公开仓库无需GitHub Token。安装程序不会覆盖已有`.env`和`data/`。
+
+首次安装按顺序询问机器人Token、主人用户ID、报表群ID和源频道ID。Token输入会显示在终端上；报表群和源频道应填写负数ID或Telegram用户名。
 
 管理命令：
 
@@ -120,6 +122,12 @@ docker logs --since 30m --tail 200 slowlink_assistant_bot
 💩直接删除完成：消息=1089 👎=0 💩=2
 帖子已保留：消息=1089 原因=主人确认
 批量删除保护已触发：10分钟内已删除4条 消息=1090 触发=💩
+```
+
+频道置顶时的正常跳过日志：
+
+```text
+跳过频道置顶通知：来源=Source 消息=1234
 ```
 
 只看异常关键词：

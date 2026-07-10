@@ -1,3 +1,6 @@
+import os
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -53,6 +56,49 @@ class DistributionScriptTests(unittest.TestCase):
         self.assertIn('-H "Accept: $accept"', text)
         self.assertGreaterEqual(text.count('"application/octet-stream"'), 2)
         self.assertNotIn('.browser_download_url', text)
+
+    def test_install_script_explains_each_visible_input(self):
+        text = self.read_required("install.sh")
+
+        for fragment in (
+            "[1/4]机器人Token",
+            "从@BotFather获取",
+            "输入内容会显示",
+            "[2/4]主人用户ID",
+            "你自己的Telegram数字ID",
+            "[3/4]报表群ID",
+            "接收日报、周报和月报",
+            "[4/4]源频道ID",
+            "多个用英文逗号分隔",
+        ):
+            self.assertIn(fragment, text)
+        self.assertNotIn("stty -echo", text)
+        self.assertNotIn("secret=", text)
+
+    def test_install_chat_ref_validation_rejects_positive_group_ids(self):
+        text = self.read_required("install.sh")
+        helpers = text.split("\nusage() {", 1)[0]
+        script = helpers + """
+is_chat_ref "-1001234567890" || exit 10
+is_chat_ref "@valid_name" || exit 11
+if is_chat_ref "1"; then exit 12; fi
+validate_source_refs "-1001234567890,@valid_name" || exit 13
+if validate_source_refs "-1001234567890,1"; then exit 14; fi
+"""
+
+        shell = shutil.which("dash") or shutil.which("sh")
+        if shell is None and os.name == "nt":
+            candidate = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "dash.exe"
+            if candidate.is_file():
+                shell = str(candidate)
+        self.assertIsNotNone(shell, "dash or sh is required for installer validation tests")
+
+        env = os.environ.copy()
+        env["PATH"] = str(Path(shell).resolve().parent) + os.pathsep + env.get("PATH", "")
+        result = subprocess.run([shell], input=script.encode("utf-8"), capture_output=True, env=env, check=False)
+
+        output = (result.stderr or result.stdout).decode("utf-8", errors="replace")
+        self.assertEqual(result.returncode, 0, output)
 
     def test_manage_script_exposes_scoped_commands_and_delegates_uninstall(self):
         text = self.read_required("manage.sh")
