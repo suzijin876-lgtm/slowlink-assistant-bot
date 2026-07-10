@@ -1,0 +1,31 @@
+SlowLink Assistant Bot V0.1.9 更新日志
+
+1. watchdog 自动重启后私聊提醒。
+   - CPU 持续过高触发自动重启后，会通过 Bot 私聊提醒 OWNER_USER_ID。
+   - 提醒内容包含容器名、CPU 和时间。
+
+2. /check 增加守护状态。
+   - watchdog 每轮写入 data/watchdog_status.txt。
+   - /check 会显示“守护：正常/异常/未知”。
+   - 容器内可读取同一个状态文件。
+
+3. 报表置顶优化。
+   - 新日报、周报、月报发送后会置顶。
+   - 新报表置顶成功后，会取消上一条报表置顶。
+   - 保存上一条报表置顶消息 ID。
+
+4. 文档和归档整理。
+   - README 改为入口文档。
+   - 新增 docs/FEATURES.md。
+   - 新增 docs/OPERATIONS.md。
+   - 新增 docs/VERSION_ARCHIVE.md。
+   - 新增根目录 V0.1.x 版本归档目录。
+
+5. 回归验证。
+   - python -m compileall -q assistant_bot tests
+   - python -m unittest discover -s tests -v
+   - 服务器 sh -n ops/slowlink_assistant_watchdog.sh
+
+6. 包文件。
+   - slowlink_assistant_bot_app_v0_1_9.zip：仅应用源码。
+   - slowlink_assistant_bot_v0_1_9_full.zip：完整部署包。

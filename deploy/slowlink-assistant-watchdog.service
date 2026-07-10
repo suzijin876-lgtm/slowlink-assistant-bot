@@ -1,0 +1,23 @@
+[Unit]
+Description=SlowLink Assistant Bot CPU Watchdog
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+Environment=APP_CONTAINER=slowlink_assistant_bot
+Environment=CHECK_INTERVAL=20
+Environment=CPU_THRESHOLD=85
+Environment=HIGH_COUNT_LIMIT=4
+Environment=COOLDOWN_SECONDS=600
+Environment=LOG_FILE=/opt/slowlink_assistant_bot/watchdog.log
+Environment=ENV_FILE=/opt/slowlink_assistant_bot/.env
+Environment=STATUS_FILE=/opt/slowlink_assistant_bot/data/watchdog_status.txt
+ExecStart=/bin/sh /opt/slowlink_assistant_bot/ops/slowlink_assistant_watchdog.sh
+Restart=always
+RestartSec=5
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target
