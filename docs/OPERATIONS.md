@@ -1,6 +1,41 @@
 # 运维说明
 
-当前版本：`0.1.14`
+当前版本：`0.1.15`
+
+## 一键安装
+
+Ubuntu和Debian：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/install.sh | sudo bash
+```
+
+当前公开仓库无需GitHub Token。安装程序不会覆盖已有`.env`和`data/`。
+
+管理命令：
+
+```bash
+sudo /opt/slowlink_assistant_bot/manage.sh status
+sudo /opt/slowlink_assistant_bot/manage.sh logs
+sudo /opt/slowlink_assistant_bot/manage.sh restart
+sudo /opt/slowlink_assistant_bot/manage.sh update
+sudo /opt/slowlink_assistant_bot/manage.sh backup
+sudo /opt/slowlink_assistant_bot/manage.sh uninstall
+```
+
+`purge`会永久删除配置和数据库，必须手动输入`PURGE`确认。
+
+一键卸载并保留数据：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/uninstall.sh | sudo bash
+```
+
+永久删除：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/uninstall.sh | sudo bash -s -- --purge
+```
 
 ## 服务器路径
 
@@ -184,6 +219,14 @@ python -m unittest discover -s tests -v
 - 只重建 `slowlink_assistant_bot`，不要动主 SlowLink。
 - 更新 watchdog 脚本后，需要执行 `systemctl daemon-reload` 并重启 `slowlink-assistant-watchdog.service`。
 - 上传包可以部署完成后删除，避免残留。
+
+## 发布新版本
+
+1. 更新`VERSION`、`assistant_bot/__init__.py`和`CHANGELOG.md`。
+2. 运行全部测试和Bash语法检查。
+3. 提交并推送`main`。
+4. 创建并推送`vX.Y.Z`标签。
+5. GitHub Actions自动生成app包、full包、更新日志和`SHA256SUMS.txt`并发布Release。
 
 ## 主 SlowLink 验证
 

@@ -1,43 +1,31 @@
-# 版本归档
+# 发布与归档
 
-当前版本：`0.1.14`
+当前版本：`0.1.15`
 
-归档方式对齐主 SlowLink：根目录下每个版本一个目录，例如 `V0.1.13/`。版本目录内放更新日志；从 `V0.1.9` 开始，正式放 app 包和 full 包。
+## GitHub Releases
 
-## 当前版本
+从V0.1.15起，版本包不再提交到Git仓库根目录，统一保存在：
 
-`V0.1.14/`
+[SlowLink Assistant Bot Releases](https://github.com/suzijin876-lgtm/slowlink-assistant-bot/releases)
+
+每个Release包含：
 
 ```text
-slowlink_assistant_bot_app_v0_1_14.zip
-slowlink_assistant_bot_v0_1_14_full.zip
-slowlink_assistant_bot_v0_1_14_update_log.txt
+slowlink_assistant_bot_app_vX_Y_Z.zip
+slowlink_assistant_bot_vX_Y_Z_full.zip
+slowlink_assistant_bot_vX_Y_Z_update_log.txt
+SHA256SUMS.txt
 ```
 
-## 目录索引
+## 历史记录
 
-| 版本 | 目录 | 内容 |
-| --- | --- | --- |
-| 0.1.14 | [V0.1.14](../V0.1.14) | app 包、full 包、更新日志 |
-| 0.1.13 | [V0.1.13](../V0.1.13) | app 包、full 包、更新日志 |
-| 0.1.12 | [V0.1.12](../V0.1.12) | app 包、full 包、更新日志 |
-| 0.1.11 | [V0.1.11](../V0.1.11) | app 包、full 包、更新日志 |
-| 0.1.10 | [V0.1.10](../V0.1.10) | app 包、full 包、更新日志 |
-| 0.1.9 | [V0.1.9](../V0.1.9) | app 包、full 包、更新日志 |
-| 0.1.8 | [V0.1.8](../V0.1.8) | 历史更新日志 |
-| 0.1.7 | [V0.1.7](../V0.1.7) | 历史更新日志 |
-| 0.1.6 | [V0.1.6](../V0.1.6) | 历史更新日志 |
-| 0.1.5 | [V0.1.5](../V0.1.5) | 历史更新日志 |
-| 0.1.4 | [V0.1.4](../V0.1.4) | 历史更新日志 |
-| 0.1.3 | [V0.1.3](../V0.1.3) | 历史更新日志 |
-| 0.1.2 | [V0.1.2](../V0.1.2) | 历史更新日志 |
-| 0.1.1 | [V0.1.1](../V0.1.1) | 历史更新日志 |
-| 0.1.0 | [V0.1.0](../V0.1.0) | 历史更新日志 |
+- 所有版本功能说明统一保存在根目录`CHANGELOG.md`。
+- V0.1.0至V0.1.14的旧压缩包保存在开发机仓库外的`slowlink_assistant_bot_releases`目录。
+- 初始Git提交仍保留旧版本目录的完整历史，需要时可通过Git恢复。
 
-## 说明
+## 发布规则
 
-- 这个归档只属于 SlowLink Assistant Bot。
-- 主 SlowLink 的 `V1.38.x` 版本目录在另一个项目里，不混在这里。
-- `V0.1.0` 到 `V0.1.8` 当时没有按版本生成完整包，所以只补历史更新日志，不伪造旧源码包。
-- `V0.1.9` 起按固定结构归档：`app zip`、`full zip`、`update_log.txt`。
-- 以后每次升级都新增一个 `V0.x.x/` 目录，避免所有版本挤在一个文档里。
+- `main`只保存当前源码和文档。
+- 版本号同时更新`VERSION`和`assistant_bot/__init__.py`。
+- 推送`vX.Y.Z`标签后，GitHub Actions运行测试并自动创建Release。
+- `.env`、数据库、日志和服务器凭据永远不进入Git或Release。

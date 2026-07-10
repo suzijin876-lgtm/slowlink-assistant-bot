@@ -1,6 +1,16 @@
 # 功能说明
 
-当前版本：`0.1.14`
+当前版本：`0.1.15`
+
+## 安装和更新
+
+- `install.sh`支持Ubuntu和Debian一键安装。
+- 自动安装Docker Engine和Docker Compose，下载GitHub最新稳定Release并校验SHA-256。
+- 首次安装交互填写配置，Bot Token输入不回显，`.env`权限为`600`。
+- 重复安装或`--update`保留`.env`、SQLite数据库和备份。
+- `manage.sh`提供状态、日志、重启、更新、备份、卸载和彻底删除命令。
+- `uninstall.sh`支持一条命令卸载；默认保留配置和数据库，`--purge`需输入`PURGE`确认。
+- GitHub Tag会自动运行测试并创建带校验文件的Release。
 
 ## 核心转发
 
