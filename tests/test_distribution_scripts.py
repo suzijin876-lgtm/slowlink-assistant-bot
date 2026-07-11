@@ -100,6 +100,31 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
         output = (result.stderr or result.stdout).decode("utf-8", errors="replace")
         self.assertEqual(result.returncode, 0, output)
 
+    def test_install_script_offers_unified_management_menu(self):
+        text = self.read_required("install.sh")
+
+        for fragment in (
+            "SlowLink Assistant Bot 管理",
+            "1.安装",
+            "2.更新到最新版本",
+            "3.卸载",
+            "0.退出",
+            "卸载方式",
+            "1.卸载程序，保留配置和数据库",
+            "2.彻底删除程序、配置和数据库",
+            "0.返回上一级",
+            'IFS= read -r choice < /dev/tty',
+            'sh "$INSTALL_DIR/uninstall.sh"',
+            'sh "$INSTALL_DIR/uninstall.sh" --purge',
+            "SHOW_MENU=1",
+            "UPDATE_ONLY=1",
+        ):
+            self.assertIn(fragment, text)
+        for option in ("--version", "--update", "--help"):
+            self.assertIn(option, text)
+        self.assertIn("尚未检测到安装，请先选择1安装", text)
+        self.assertIn("请输入0、1、2或3", text)
+
     def test_manage_script_exposes_scoped_commands_and_delegates_uninstall(self):
         text = self.read_required("manage.sh")
 

@@ -7,7 +7,10 @@ CONTAINER="slowlink_assistant_bot"
 WATCHDOG_SERVICE="slowlink-assistant-watchdog.service"
 REQUESTED_VERSION=""
 UPDATE_ONLY=0
+SHOW_MENU=0
 TMP_DIR=""
+
+[ "$#" -eq 0 ] && SHOW_MENU=1
 
 log() {
   printf '[安装] %s\n' "$*"
@@ -54,12 +57,86 @@ validate_source_refs() {
 
 usage() {
   cat <<'EOF'
-用法：sudo sh install.sh [--version 0.1.16] [--update]
+用法：sudo sh install.sh [--version 0.1.17] [--update]
 
   --version VERSION  安装指定版本，默认安装GitHub最新稳定版
   --update           保留现有.env和data并更新程序
   --help             显示帮助
 EOF
+}
+
+uninstall_menu() {
+  if [ ! -f "$INSTALL_DIR/uninstall.sh" ]; then
+    printf '[提示]尚未检测到已安装的Bot，无法卸载。\n' > /dev/tty
+    return
+  fi
+  while true; do
+    cat > /dev/tty <<'EOF'
+卸载方式
+1.卸载程序，保留配置和数据库
+2.彻底删除程序、配置和数据库
+0.返回上一级
+请选择：
+EOF
+    choice=""
+    IFS= read -r choice < /dev/tty || choice=""
+    case "$choice" in
+      1)
+        if sh "$INSTALL_DIR/uninstall.sh"; then
+          exit 0
+        fi
+        ;;
+      2)
+        if sh "$INSTALL_DIR/uninstall.sh" --purge; then
+          exit 0
+        fi
+        ;;
+      0)
+        return
+        ;;
+      *)
+        printf '[输入错误]请输入0、1或2。\n' > /dev/tty
+        ;;
+    esac
+  done
+}
+
+main_menu() {
+  while true; do
+    cat > /dev/tty <<'EOF'
+SlowLink Assistant Bot 管理
+1.安装
+2.更新到最新版本
+3.卸载
+0.退出
+请选择：
+EOF
+    choice=""
+    IFS= read -r choice < /dev/tty || choice=""
+    case "$choice" in
+      1)
+        return
+        ;;
+      2)
+        if [ ! -f "$INSTALL_DIR/.env" ]; then
+          printf '[提示]尚未检测到安装，请先选择1安装。\n' > /dev/tty
+          continue
+        fi
+        UPDATE_ONLY=1
+        return
+        ;;
+      3)
+        uninstall_menu
+        ;;
+      0)
+        printf '已退出。\n' > /dev/tty
+        exit 0
+        ;;
+      *)
+        printf '[输入错误]请输入0、1、2或3。\n' > /dev/tty
+        ;;
+    esac
+  done
 }
 
 while [ "$#" -gt 0 ]; do
@@ -84,6 +161,12 @@ while [ "$#" -gt 0 ]; do
 done
 
 [ "$(id -u)" -eq 0 ] || die "请使用root运行：curl ... | sudo bash"
+if [ "$SHOW_MENU" -eq 1 ]; then
+  main_menu
+fi
+if [ "$UPDATE_ONLY" -eq 1 ] && [ ! -f "$INSTALL_DIR/.env" ]; then
+  die "尚未检测到安装，请先运行安装菜单并选择1安装"
+fi
 [ -r /etc/os-release ] || die "无法识别Linux发行版"
 . /etc/os-release
 case "${ID:-}" in

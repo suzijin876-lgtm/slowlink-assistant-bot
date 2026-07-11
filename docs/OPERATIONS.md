@@ -1,8 +1,8 @@
 # 运维说明
 
-当前版本：`0.1.16`
+当前版本：`0.1.17`
 
-## 一键安装
+## 统一管理入口
 
 Ubuntu和Debian：
 
@@ -12,9 +12,30 @@ curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-
 
 当前公开仓库无需GitHub Token。安装程序不会覆盖已有`.env`和`data/`。
 
+无参数运行时显示：
+
+```text
+SlowLink Assistant Bot 管理
+1.安装
+2.更新到最新版本
+3.卸载
+0.退出
+```
+
+卸载二级菜单：
+
+```text
+卸载方式
+1.卸载程序，保留配置和数据库
+2.彻底删除程序、配置和数据库
+0.返回上一级
+```
+
+彻底删除仍需输入`PURGE`确认。更新选项要求Bot已经安装，并自动保留`.env`和`data/`。
+
 首次安装按顺序询问机器人Token、主人用户ID、报表群ID和源频道ID。Token输入会显示在终端上；报表群和源频道应填写负数ID或Telegram用户名。
 
-管理命令：
+高级管理命令：
 
 ```bash
 sudo /opt/slowlink_assistant_bot/manage.sh status
@@ -25,19 +46,7 @@ sudo /opt/slowlink_assistant_bot/manage.sh backup
 sudo /opt/slowlink_assistant_bot/manage.sh uninstall
 ```
 
-`purge`会永久删除配置和数据库，必须手动输入`PURGE`确认。
-
-一键卸载并保留数据：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/uninstall.sh | sudo bash
-```
-
-永久删除：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/uninstall.sh | sudo bash -s -- --purge
-```
+`manage.sh purge`会永久删除配置和数据库，必须手动输入`PURGE`确认。
 
 ## 服务器路径
 
