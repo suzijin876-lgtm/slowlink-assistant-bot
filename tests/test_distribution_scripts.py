@@ -169,13 +169,15 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
             'v*',
             'contents: write',
             'python -m unittest discover -s tests',
-            'python -m compileall -q assistant_bot tests',
+            'python -m compileall -q assistant_bot scripts tests',
+            'python scripts/build_release.py --version "$version" --output dist',
             'slowlink_assistant_bot_app_',
             'slowlink_assistant_bot_v',
             'SHA256SUMS.txt',
             'gh release create',
             'GH_TOKEN:',
             'uninstall.sh',
+            '--notes-file "dist/slowlink_assistant_bot_v${file_version}_update_log.txt"',
         ):
             self.assertIn(fragment, text)
         self.assertIn(
@@ -186,6 +188,7 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
             'dash -n install.sh manage.sh uninstall.sh ops/slowlink_assistant_watchdog.sh',
             text,
         )
+        self.assertNotIn('--generate-notes', text)
 
     def test_repository_root_has_no_version_archive_directories_or_deploy_zip(self):
         version_dirs = [path.name for path in ROOT.iterdir() if path.is_dir() and path.name.startswith("V0.1.")]

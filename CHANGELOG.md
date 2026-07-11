@@ -2,6 +2,15 @@
 
 本项目从V0.1.15起使用GitHub Releases保存安装包，Git仓库只保留源码、文档和发布记录。
 
+## [0.1.18] - 2026-07-11
+
+- 参考主SlowLink重写README，增加居中项目介绍、Release、GitHub Actions、Python、Docker和MIT License徽章。
+- 将一键安装提前，并用简洁表格和流程图说明频道消息复制、主人私聊通知、定时报表与日常管理。
+- 增加MIT License，完善敏感数据忽略规则，并从公开仓库移除内部规划稿。
+- 增加可测试的发布构建脚本，统一生成app包、full包、update_log.txt和SHA256SUMS.txt四个本地归档文件。
+- SHA256SUMS.txt只校验两个ZIP；GitHub Release只上传两个ZIP和校验文件，正文直接使用中文更新日志。
+- 整理GitHub仓库简介、Topics、Wiki、Projects和历史Release展示；未修改Bot业务逻辑。
+
 ## [0.1.17] - 2026-07-11
 
 - 公开脚本改成统一管理入口，无参数运行时提供安装、更新、卸载和退出菜单。

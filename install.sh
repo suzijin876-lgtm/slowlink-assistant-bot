@@ -57,7 +57,7 @@ validate_source_refs() {
 
 usage() {
   cat <<'EOF'
-用法：sudo sh install.sh [--version 0.1.17] [--update]
+用法：sudo sh install.sh [--version 0.1.18] [--update]
 
   --version VERSION  安装指定版本，默认安装GitHub最新稳定版
   --update           保留现有.env和data并更新程序
