@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -164,8 +165,13 @@ class RepositoryReleaseTests(unittest.TestCase):
 
     def test_public_repository_has_no_internal_plans_or_runtime_artifacts(self):
         self.assertFalse((ROOT / "docs" / "superpowers").exists())
-        for relative_path in (".env", "data", "watchdog.log"):
-            self.assertFalse((ROOT / relative_path).exists(), relative_path)
+
+        tracked = set(
+            subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines()
+        )
+        for relative_path in (".env", "watchdog.log"):
+            self.assertNotIn(relative_path, tracked)
+        self.assertFalse(any(path == "data" or path.startswith("data/") for path in tracked))
 
         version_dirs = [path.name for path in ROOT.iterdir() if path.is_dir() and path.name.startswith("V0.1.")]
         root_archives = [path.name for path in ROOT.iterdir() if path.is_file() and path.suffix.lower() == ".zip"]
