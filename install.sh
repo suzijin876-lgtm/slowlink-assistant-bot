@@ -57,7 +57,7 @@ validate_source_refs() {
 
 usage() {
   cat <<'EOF'
-用法：sudo sh install.sh [--version 0.1.19] [--update]
+用法：sudo sh install.sh [--version 0.1.20] [--update]
 
   --version VERSION  安装指定版本，默认安装GitHub最新稳定版
   --update           保留现有.env和data并更新程序
@@ -310,6 +310,8 @@ fi
 log "部署到$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR" "$INSTALL_DIR/data"
 cp -a "$STAGE"/. "$INSTALL_DIR"/
+find "$INSTALL_DIR/assistant_bot" -type f -exec touch {} +
+touch "$INSTALL_DIR/Dockerfile" "$INSTALL_DIR/requirements.txt" "$INSTALL_DIR/docker-compose.yml"
 if [ "$KEEP_ENV" -eq 0 ]; then
   install -m 600 "$ENV_FILE" "$INSTALL_DIR/.env"
 else
@@ -322,7 +324,7 @@ systemctl daemon-reload
 
 cd "$INSTALL_DIR"
 log "构建并启动Assistant Bot"
-docker compose build assistant_bot
+docker compose build --no-cache assistant_bot
 docker compose up -d --no-deps assistant_bot
 
 healthy=0

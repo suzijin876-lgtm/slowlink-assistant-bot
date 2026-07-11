@@ -32,6 +32,8 @@ class DistributionScriptTests(unittest.TestCase):
             'get.docker.com',
             'docker compose version',
             'slowlink-assistant-watchdog.service',
+            'find "$INSTALL_DIR/assistant_bot" -type f -exec touch {} +',
+            'docker compose build --no-cache assistant_bot',
             'docker compose up -d --no-deps assistant_bot',
             'slowlink_assistant_bot',
             '安装',
@@ -51,7 +53,11 @@ class DistributionScriptTests(unittest.TestCase):
 
         package_guard = text.index("安装包包含不应覆盖的配置、数据或Git目录")
         deploy_copy = text.index('cp -a "$STAGE"/. "$INSTALL_DIR"/')
+        refresh_build_inputs = text.index('find "$INSTALL_DIR/assistant_bot" -type f -exec touch {} +')
+        no_cache_build = text.index('docker compose build --no-cache assistant_bot')
         self.assertLess(package_guard, deploy_copy)
+        self.assertLess(deploy_copy, refresh_build_inputs)
+        self.assertLess(refresh_build_inputs, no_cache_build)
         self.assertGreaterEqual(text.count('| .url'), 2)
         self.assertIn('-H "Accept: $accept"', text)
         self.assertGreaterEqual(text.count('"application/octet-stream"'), 2)
