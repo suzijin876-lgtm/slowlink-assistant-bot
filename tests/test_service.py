@@ -148,7 +148,7 @@ class AssistantServiceTests(unittest.TestCase):
                 "message_id": message_id,
                 "date": int(at.timestamp()),
                 "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                "text": "test",
+                "text": f"https://t.me/ShardCatDen/{message_id}",
             },
         })
 
@@ -182,7 +182,7 @@ class AssistantServiceTests(unittest.TestCase):
             "channel_post": {
                 "message_id": 55,
                 "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                "text": "Homeless\nhttps://t.me/ShardCatDen/555090",
+                "text": "https://t.me/ShardCatDen/555090",
             },
         }
 
@@ -191,6 +191,69 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertEqual(self.api.copied, [(42, -1001, 55)])
         stats = self.store.stats_between(datetime(2026, 7, 10, 0, 0, tzinfo=TZ), datetime(2026, 7, 11, 0, 0, tzinfo=TZ))
         self.assertEqual(stats.success_count, 1)
+
+    def test_private_channel_post_link_in_caption_is_copied(self):
+        self.make_service()
+        self.service.handle_update({
+            "update_id": 2,
+            "channel_post": {
+                "message_id": 56,
+                "chat": {"id": -1001, "type": "channel", "title": "Source"},
+                "caption": "  https://t.me/c/1234567890/56\n",
+            },
+        })
+
+        self.assertEqual(self.api.copied, [(42, -1001, 56)])
+
+    def test_plain_text_source_post_is_ignored(self):
+        self.make_service()
+        self.service.handle_update({
+            "update_id": 3,
+            "channel_post": {
+                "message_id": 57,
+                "chat": {"id": -1001, "type": "channel", "title": "Source"},
+                "text": "今晚频道抽奖，欢迎参加",
+            },
+        })
+
+        self.assertEqual(self.api.copied, [])
+        self.assertIsNone(self.store.get_moderation_post("-1001", 57))
+
+    def test_source_post_with_extra_text_around_link_is_ignored(self):
+        self.make_service()
+        self.service.handle_update({
+            "update_id": 4,
+            "channel_post": {
+                "message_id": 58,
+                "chat": {"id": -1001, "type": "channel", "title": "Source"},
+                "text": "抽奖地址：https://t.me/ShardCatDen/577869",
+            },
+        })
+
+        self.assertEqual(self.api.copied, [])
+        self.assertIsNone(self.store.get_moderation_post("-1001", 58))
+
+    def test_non_post_links_are_ignored(self):
+        self.make_service()
+        invalid_links = (
+            "https://example.com/ShardCatDen/577869",
+            "https://t.me/ShardCatDen",
+            "https://t.me/+invite_code",
+            "https://t.me/slowlinkbot?start=577869",
+        )
+
+        for index, text in enumerate(invalid_links, start=60):
+            with self.subTest(text=text):
+                self.service.handle_update({
+                    "update_id": index,
+                    "channel_post": {
+                        "message_id": index,
+                        "chat": {"id": -1001, "type": "channel", "title": "Source"},
+                        "text": text,
+                    },
+                })
+
+        self.assertEqual(self.api.copied, [])
 
     def test_channel_pin_service_message_is_ignored(self):
         self.make_service()
@@ -967,7 +1030,7 @@ class AssistantServiceTests(unittest.TestCase):
             "channel_post": {
                 "message_id": 88,
                 "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                "text": "x",
+                "text": "https://t.me/ShardCatDen/88",
             },
         })
 
@@ -988,7 +1051,7 @@ class AssistantServiceTests(unittest.TestCase):
                 "channel_post": {
                     "message_id": message_id,
                     "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                    "text": "x",
+                    "text": f"https://t.me/ShardCatDen/{message_id}",
                 },
             })
 
@@ -1004,7 +1067,7 @@ class AssistantServiceTests(unittest.TestCase):
             "channel_post": {
                 "message_id": 92,
                 "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                "text": "x",
+                "text": "https://t.me/ShardCatDen/92",
             },
         })
 
@@ -1027,7 +1090,7 @@ class AssistantServiceTests(unittest.TestCase):
                 "channel_post": {
                     "message_id": message_id,
                     "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                    "text": "x",
+                    "text": f"https://t.me/ShardCatDen/{message_id}",
                 },
             })
         self.assertEqual(len(self.api.sent), 1)
@@ -1041,7 +1104,7 @@ class AssistantServiceTests(unittest.TestCase):
                 "channel_post": {
                     "message_id": message_id,
                     "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                    "text": "x",
+                    "text": f"https://t.me/ShardCatDen/{message_id}",
                 },
             })
         self.assertEqual(len(self.api.sent), 1)
@@ -1055,7 +1118,7 @@ class AssistantServiceTests(unittest.TestCase):
                 "channel_post": {
                     "message_id": message_id,
                     "chat": {"id": -1001, "type": "channel", "title": "Source"},
-                    "text": "x",
+                    "text": f"https://t.me/ShardCatDen/{message_id}",
                 },
             })
         self.assertEqual(len(self.api.sent), 2)

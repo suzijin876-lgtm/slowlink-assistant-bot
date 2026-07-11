@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Any
@@ -33,6 +34,17 @@ MODERATION_DELETE_DELAY = timedelta(minutes=1)
 MODERATION_POST_MAX_AGE = timedelta(hours=1)
 MODERATION_AUTO_DELETE_LIMIT = 4
 MODERATION_AUTO_DELETE_WINDOW = timedelta(minutes=10)
+TELEGRAM_POST_LINK_RE = re.compile(
+    r"https://t\.me/(?:[A-Za-z0-9_]+/[1-9]\d*|c/[1-9]\d*/[1-9]\d*)",
+    re.IGNORECASE,
+)
+
+
+def _is_telegram_post_link(message: dict[str, Any]) -> bool:
+    content = message.get("text")
+    if content is None:
+        content = message.get("caption")
+    return bool(TELEGRAM_POST_LINK_RE.fullmatch(str(content or "").strip()))
 
 
 class AssistantService:
@@ -119,6 +131,9 @@ class AssistantService:
             return
         if "pinned_message" in message:
             LOG.info("跳过频道置顶通知：来源=%s 消息=%s", source_title, message_id)
+            return
+        if not _is_telegram_post_link(message):
+            LOG.debug("跳过非Telegram帖子链接：来源=%s 消息=%s", source_title, message_id)
             return
 
         try:
