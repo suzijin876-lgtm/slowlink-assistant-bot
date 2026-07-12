@@ -245,7 +245,7 @@ class StoreAndReportTests(unittest.TestCase):
 
         text = format_report("daily", period, stats, datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
 
-        self.assertIn("📊日报", text)
+        self.assertIn("📊昨日日报", text)
         self.assertIn("日期：2026-07-09", text)
         self.assertIn("转发：3条", text)
         self.assertIn("活跃时段：20:00-21:00", text)
@@ -262,7 +262,7 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertNotIn("+08:00", text)
         self.assertNotIn("复制", text)
 
-    def test_format_report_summarizes_failures_and_empty_periods(self):
+    def test_format_report_hides_failure_reasons_and_handles_empty_periods(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "assistant.sqlite3")
             try:
@@ -270,18 +270,9 @@ class StoreAndReportTests(unittest.TestCase):
                     datetime(2026, 7, 9, 0, 0, tzinfo=TZ),
                     datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
                 )
-                empty_summary = store.failure_summary_between(
-                    datetime(2026, 7, 9, 0, 0, tzinfo=TZ),
-                    datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
-                )
-
                 store.record_copy_failure("-1001", "source", 10, "42", "bad request", datetime(2026, 7, 10, 1, 0, tzinfo=TZ))
                 store.record_copy_failure("-1001", "source", 11, "42", "bad request", datetime(2026, 7, 10, 1, 5, tzinfo=TZ))
                 stats = store.stats_between(
-                    datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
-                    datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
-                )
-                summary = store.failure_summary_between(
                     datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
                     datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
                 )
@@ -289,7 +280,7 @@ class StoreAndReportTests(unittest.TestCase):
                 store.close()
 
         period = scheduled_period("daily", datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
-        empty_text = format_report("daily", period, failed_stats, datetime(2026, 7, 10, 0, 0, tzinfo=TZ), empty_summary)
+        empty_text = format_report("daily", period, failed_stats, datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
         self.assertIn("转发：0条", empty_text)
         self.assertIn("内容纠错：删除0条", empty_text)
         self.assertNotIn("纠错保留", empty_text)
@@ -299,9 +290,10 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertNotIn("仅统计Bot转发，不代表内容正确。", empty_text)
 
         failed_period = scheduled_period("daily", datetime(2026, 7, 11, 0, 0, tzinfo=TZ))
-        failed_text = format_report("daily", failed_period, stats, datetime(2026, 7, 11, 0, 0, tzinfo=TZ), summary)
+        failed_text = format_report("daily", failed_period, stats, datetime(2026, 7, 11, 0, 0, tzinfo=TZ))
         self.assertIn("异常记录：2次", failed_text)
-        self.assertIn("原因：bad request×2", failed_text)
+        self.assertNotIn("原因：", failed_text)
+        self.assertNotIn("bad request", failed_text)
         self.assertIn("运行状态：有异常", failed_text)
 
     def test_report_includes_moderation_statistics(self):
@@ -345,13 +337,35 @@ class StoreAndReportTests(unittest.TestCase):
         period = scheduled_period("weekly", datetime(2026, 7, 13, 0, 0, tzinfo=TZ))
         text = format_report("weekly", period, stats, datetime(2026, 7, 13, 0, 0, tzinfo=TZ))
 
-        self.assertIn("📊周报", text)
+        self.assertIn("📊上周周报", text)
         self.assertIn("周期：2026-07-06至2026-07-12", text)
         self.assertIn("转发：4条", text)
         self.assertIn("日均：0.6条", text)
         self.assertIn("最活跃：07-10（3条）", text)
         self.assertIn("最后转发：07-10 20:00", text)
         self.assertNotIn("约", text)
+
+    def test_scheduled_report_titles_describe_previous_periods(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "assistant.sqlite3")
+            try:
+                stats = store.stats_between(
+                    datetime(2026, 5, 1, 0, 0, tzinfo=TZ),
+                    datetime(2026, 6, 2, 0, 0, tzinfo=TZ),
+                )
+            finally:
+                store.close()
+
+        cases = (
+            ("daily", datetime(2026, 6, 2, 0, 0, tzinfo=TZ), "📊昨日日报"),
+            ("weekly", datetime(2026, 6, 1, 0, 0, tzinfo=TZ), "📊上周周报"),
+            ("monthly", datetime(2026, 6, 1, 0, 0, tzinfo=TZ), "📊上月月报"),
+        )
+        for kind, now, expected_title in cases:
+            with self.subTest(kind=kind):
+                period = scheduled_period(kind, now)
+                text = format_report(kind, period, stats, now)
+                self.assertTrue(text.startswith(expected_title + "\n"))
 
     def test_manual_daily_period_is_today_to_now(self):
         now = datetime(2026, 7, 10, 16, 20, tzinfo=TZ)

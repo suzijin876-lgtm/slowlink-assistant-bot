@@ -657,11 +657,10 @@ class AssistantService:
         now = self._now()
         period = manual_period(kind, now)
         stats = self.store.stats_between(period.start, period.end)
-        summary = self.store.failure_summary_between(period.start, period.end)
         moderation_stats = self.store.moderation_stats_between(period.start, period.end)
         self.api.send_message(
             self.config.owner_user_id,
-            format_report(kind, period, stats, now, summary, moderation_stats),
+            format_report(kind, period, stats, now, moderation_stats=moderation_stats),
             disable_web_page_preview=True,
         )
 
@@ -669,7 +668,6 @@ class AssistantService:
         now = self._now()
         today = manual_period("daily", now)
         stats = self.store.stats_between(today.start, today.end)
-        summary = self.store.failure_summary_between(today.start, today.end)
         moderation_stats = self.store.moderation_stats_between(today.start, today.end)
         recent = format_display_time(stats.last_success_at, now)
         status = "正常" if stats.failure_count == 0 else "有失败"
@@ -691,9 +689,6 @@ class AssistantService:
             f"系统：{status if status == '正常' else '有异常'}",
             f"异常：{stats.failure_count}次",
         ]
-        if summary:
-            parts = [f"{row.get('error')}×{int(row.get('count') or 0)}" for row in summary]
-            lines.append("原因：" + "，".join(parts))
         return "\n".join(lines)
 
     def send_current_report(self, chat_id=None) -> None:
@@ -712,7 +707,6 @@ class AssistantService:
             if self.store.was_report_sent(kind, period.key):
                 continue
             stats = self.store.stats_between(period.start, period.end)
-            summary = self.store.failure_summary_between(period.start, period.end)
             moderation_stats = self.store.moderation_stats_between(period.start, period.end)
             pending.append(
                 {
@@ -720,7 +714,7 @@ class AssistantService:
                     "period": period,
                     "stats": stats,
                     "moderation_stats": moderation_stats,
-                    "text": format_report(kind, period, stats, now, summary, moderation_stats),
+                    "text": format_report(kind, period, stats, now, moderation_stats=moderation_stats),
                     "title": report_name(kind),
                 }
             )

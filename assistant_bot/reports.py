@@ -12,6 +12,12 @@ REPORT_NAMES = {
     "monthly": "月报",
 }
 
+REPORT_TITLES = {
+    "daily": "昨日日报",
+    "weekly": "上周周报",
+    "monthly": "上月月报",
+}
+
 
 def format_display_time(value: str | datetime, reference: datetime) -> str:
     if value == "-":
@@ -162,15 +168,6 @@ def should_run_report(kind: str, now: datetime, hour: int, minute: int) -> bool:
     return False
 
 
-def _failure_summary_text(failure_summary: list[dict] | None) -> str | None:
-    if not failure_summary:
-        return None
-    parts = [f"{row.get('error')}×{int(row.get('count') or 0)}" for row in failure_summary if row.get("error")]
-    if not parts:
-        return None
-    return "失败原因：" + "，".join(parts)
-
-
 def _moderation_lines(moderation_stats: ModerationStats | None) -> list[str]:
     stats = moderation_stats or ModerationStats(deleted_count=0, kept_count=0, protected_count=0)
     lines = [f"内容纠错：删除{stats.deleted_count}条"]
@@ -186,10 +183,9 @@ def format_report(
     period: Period,
     stats: Stats,
     generated_at: datetime,
-    failure_summary: list[dict] | None = None,
     moderation_stats: ModerationStats | None = None,
 ) -> str:
-    title = report_name(kind)
+    title = REPORT_TITLES.get(kind, report_name(kind))
     period_field = report_period_field(kind)
     period_label = format_period_label(period)
     status = "正常" if stats.failure_count == 0 else "有异常"
@@ -224,7 +220,4 @@ def format_report(
             f"异常记录：{stats.failure_count}次",
         ]
     )
-    summary_text = _failure_summary_text(failure_summary)
-    if summary_text:
-        lines.append(summary_text.replace("失败原因：", "原因："))
     return "\n".join(lines)

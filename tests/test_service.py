@@ -630,6 +630,24 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertNotIn("转发 0 条", self.api.sent[0][1])
         self.assertNotIn("转发0条", self.api.sent[0][1])
 
+    def test_current_report_keeps_failure_count_without_reason(self):
+        self.make_service()
+        self.store.record_copy_failure(
+            "-1001",
+            "Source",
+            1,
+            "42",
+            "copyMessage HTTP 400: message cannot be copied",
+            datetime(2026, 7, 10, 1, 0, tzinfo=TZ),
+        )
+
+        text = self.service.current_report_text()
+
+        self.assertIn("系统：有异常", text)
+        self.assertIn("异常：1次", text)
+        self.assertNotIn("原因：", text)
+        self.assertNotIn("copyMessage", text)
+
     def test_report_group_only_owner_can_request_current_report(self):
         self.make_service()
         self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 10, 1, 0, tzinfo=TZ))
@@ -782,7 +800,7 @@ class AssistantServiceTests(unittest.TestCase):
             self.service.run_due_reports(datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
 
         self.assertEqual(self.api.sent[0][0], -1009)
-        self.assertIn("📊日报", self.api.sent[0][1])
+        self.assertIn("📊昨日日报", self.api.sent[0][1])
         self.assertIn("日期：2026-07-09", self.api.sent[0][1])
         self.assertIn("转发：1条", self.api.sent[0][1])
         self.assertIn("内容纠错：删除1条", self.api.sent[0][1])
@@ -817,9 +835,9 @@ class AssistantServiceTests(unittest.TestCase):
 
         self.assertEqual(len(self.api.sent), 1)
         self.assertEqual(self.api.sent[0][0], -1009)
-        self.assertIn("📊日报", self.api.sent[0][1])
-        self.assertIn("📊周报", self.api.sent[0][1])
-        self.assertNotIn("📊月报", self.api.sent[0][1])
+        self.assertIn("📊昨日日报", self.api.sent[0][1])
+        self.assertIn("📊上周周报", self.api.sent[0][1])
+        self.assertNotIn("📊上月月报", self.api.sent[0][1])
         self.assertIn("────────", self.api.sent[0][1])
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])
         daily = scheduled_period("daily", now)
@@ -836,9 +854,9 @@ class AssistantServiceTests(unittest.TestCase):
         self.service.run_due_reports(now)
 
         self.assertEqual(len(self.api.sent), 1)
-        self.assertIn("📊日报", self.api.sent[0][1])
-        self.assertNotIn("📊周报", self.api.sent[0][1])
-        self.assertIn("📊月报", self.api.sent[0][1])
+        self.assertIn("📊昨日日报", self.api.sent[0][1])
+        self.assertNotIn("📊上周周报", self.api.sent[0][1])
+        self.assertIn("📊上月月报", self.api.sent[0][1])
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])
         daily = scheduled_period("daily", now)
         monthly = scheduled_period("monthly", now)
@@ -853,9 +871,9 @@ class AssistantServiceTests(unittest.TestCase):
 
         self.assertEqual(len(self.api.sent), 1)
         self.assertEqual(self.api.sent[0][1].count("📊"), 3)
-        self.assertIn("📊日报", self.api.sent[0][1])
-        self.assertIn("📊周报", self.api.sent[0][1])
-        self.assertIn("📊月报", self.api.sent[0][1])
+        self.assertIn("📊昨日日报", self.api.sent[0][1])
+        self.assertIn("📊上周周报", self.api.sent[0][1])
+        self.assertIn("📊上月月报", self.api.sent[0][1])
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])
         for kind in ("daily", "weekly", "monthly"):
             period = scheduled_period(kind, now)
