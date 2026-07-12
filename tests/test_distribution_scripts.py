@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -114,6 +115,7 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
             "1.安装",
             "2.更新到最新版本",
             "3.卸载",
+            "4.修改配置",
             "0.退出",
             "卸载方式",
             "1.卸载程序，保留配置和数据库",
@@ -124,12 +126,86 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
             'sh "$INSTALL_DIR/uninstall.sh" --purge',
             "SHOW_MENU=1",
             "UPDATE_ONLY=1",
+            "CONFIGURE_ONLY=1",
         ):
             self.assertIn(fragment, text)
         for option in ("--version", "--update", "--help"):
             self.assertIn(option, text)
         self.assertIn("尚未检测到安装，请先选择1安装", text)
-        self.assertIn("请输入0、1、2或3", text)
+        self.assertIn("请输入0、1、2、3或4", text)
+
+    def test_config_editor_is_atomic_scoped_and_rolls_back_on_unhealthy_container(self):
+        text = self.read_required("install.sh")
+
+        for fragment in (
+            "configure_existing",
+            "机器人Token（已配置，直接回车保留",
+            "write_updated_env",
+            'install -m 600 "$NEW_ENV" "$INSTALL_DIR/.env.next"',
+            'mv -f "$INSTALL_DIR/.env.next" "$INSTALL_DIR/.env"',
+            "docker compose up -d --no-deps --force-recreate assistant_bot",
+            'install -m 600 "$OLD_ENV" "$INSTALL_DIR/.env.rollback"',
+            "新配置启动失败，已恢复旧配置",
+        ):
+            self.assertIn(fragment, text)
+
+        configure = text.split("configure_existing() {", 1)[1].split("\n}\n", 1)[0]
+        self.assertNotIn("docker compose down", configure)
+        self.assertNotIn("slowlink_app", configure)
+        self.assertNotIn("slowlink_redis", configure)
+
+    def test_config_editor_replaces_only_managed_values(self):
+        text = self.read_required("install.sh")
+        helpers = text.split("\nusage() {", 1)[0]
+        script = helpers + r'''
+BOT_TOKEN_VALUE="222:new_token"
+OWNER_USER_ID_VALUE="222"
+REPORT_CHAT_ID_VALUE="-100222"
+SOURCE_CHANNEL_IDS_VALUE="-100333,@new_source"
+write_updated_env "$INPUT_ENV" "$OUTPUT_ENV"
+'''
+
+        shell = shutil.which("dash") or shutil.which("sh")
+        if shell is None and os.name == "nt":
+            candidate = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "usr" / "bin" / "dash.exe"
+            if candidate.is_file():
+                shell = str(candidate)
+        self.assertIsNotNone(shell, "dash or sh is required for config editor tests")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            source = temp / "source.env"
+            output = temp / "output.env"
+            source.write_text(
+                "BOT_TOKEN=111:old_token\n"
+                "OWNER_USER_ID=111\n"
+                "REPORT_CHAT_ID=-100111\n"
+                "SOURCE_CHANNEL_IDS=-100111\n"
+                "POLL_TIMEOUT=99\n"
+                "CUSTOM_SETTING=keep_me\n",
+                encoding="utf-8",
+            )
+            env = os.environ.copy()
+            env["PATH"] = str(Path(shell).resolve().parent) + os.pathsep + env.get("PATH", "")
+            env["INPUT_ENV"] = str(source)
+            env["OUTPUT_ENV"] = str(output)
+            result = subprocess.run([shell], input=script.encode("utf-8"), capture_output=True, env=env, check=False)
+
+            message = (result.stderr or result.stdout).decode("utf-8", errors="replace")
+            self.assertEqual(result.returncode, 0, message)
+            values = output.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(
+            values,
+            [
+                "BOT_TOKEN=222:new_token",
+                "OWNER_USER_ID=222",
+                "REPORT_CHAT_ID=-100222",
+                "SOURCE_CHANNEL_IDS=-100333,@new_source",
+                "POLL_TIMEOUT=99",
+                "CUSTOM_SETTING=keep_me",
+            ],
+        )
 
     def test_manage_script_exposes_scoped_commands_and_delegates_uninstall(self):
         text = self.read_required("manage.sh")

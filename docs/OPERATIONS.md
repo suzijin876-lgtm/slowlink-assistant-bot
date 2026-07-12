@@ -1,6 +1,6 @@
 # 运维说明
 
-当前版本：`0.1.20`
+当前版本：`0.1.21`
 
 ## 统一管理入口
 
@@ -195,22 +195,20 @@ CPU 阈值：85%
 
 ## 配置变更
 
-修改 Bot token：
+运行统一管理入口：
 
 ```bash
-cd /opt/slowlink_assistant_bot
-nano .env
-docker compose up -d assistant_bot
-systemctl restart slowlink-assistant-watchdog.service
+curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/install.sh | sudo bash
 ```
 
-修改源频道、报表群或 owner：
+选择`4.修改配置`后，可依次修改：
 
-```bash
-cd /opt/slowlink_assistant_bot
-nano .env
-docker compose up -d assistant_bot
-```
+- Bot Token
+- 主人用户ID
+- 报表群ID
+- 源频道ID
+
+每项直接回车保留原值。脚本只替换这四项并保留其他`.env`设置，然后强制重建Assistant Bot容器以读取新配置。新配置启动失败时自动恢复旧配置；SQLite、备份、主SlowLink、Redis和watchdog不会被修改或重启。
 
 ## 频道纠错权限
 

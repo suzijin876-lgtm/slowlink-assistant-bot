@@ -24,7 +24,7 @@ SlowLink Assistant Bot 与主 [SlowLink](https://github.com/suzijin876-lgtm/slow
 curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/install.sh | sudo bash
 ```
 
-脚本会显示中文菜单，可选择安装、更新或卸载。首次安装需要填写 Bot Token、主人用户 ID、固定报表群和源频道。
+脚本会显示中文菜单，可选择安装、更新、卸载或修改配置。修改配置时每项直接回车即可保留原值，失败会自动恢复旧配置。首次安装需要填写 Bot Token、主人用户 ID、固定报表群和源频道。
 
 ## 主要功能
 

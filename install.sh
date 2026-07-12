@@ -7,6 +7,7 @@ CONTAINER="slowlink_assistant_bot"
 WATCHDOG_SERVICE="slowlink-assistant-watchdog.service"
 REQUESTED_VERSION=""
 UPDATE_ONLY=0
+CONFIGURE_ONLY=0
 SHOW_MENU=0
 TMP_DIR=""
 
@@ -55,9 +56,182 @@ validate_source_refs() {
   done
 }
 
+prompt_value() {
+  prompt=$1
+  value=""
+  while [ -z "$value" ]; do
+    printf '%s' "$prompt" > /dev/tty
+    IFS= read -r value < /dev/tty || value=""
+  done
+  printf '%s' "$value"
+}
+
+prompt_keep() {
+  prompt=$1
+  current=$2
+  printf '%s' "$prompt" > /dev/tty
+  value=""
+  IFS= read -r value < /dev/tty || value=""
+  if [ -n "$value" ]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$current"
+  fi
+}
+
+read_env_value() {
+  key=$1
+  env_path=$2
+  found=""
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "$key="*) found=${line#*=} ;;
+    esac
+  done < "$env_path"
+  printf '%s' "$found"
+}
+
+validate_config_values() {
+  case "$BOT_TOKEN_VALUE" in *:*) ;; *) die "BOT_TOKEN格式不正确" ;; esac
+  case "$OWNER_USER_ID_VALUE" in ''|*[!0-9]*) die "OWNER_USER_ID必须是正整数" ;; esac
+  [ "$OWNER_USER_ID_VALUE" -gt 0 ] || die "OWNER_USER_ID必须大于0"
+  is_chat_ref "$REPORT_CHAT_ID_VALUE" || die "报表群ID格式不正确：请填写负数群ID或群用户名"
+  validate_source_refs "$SOURCE_CHANNEL_IDS_VALUE" || die "源频道ID格式不正确：请填写负数频道ID或频道用户名，多个用英文逗号分隔"
+}
+
+write_new_env() {
+  output=$1
+  umask 077
+  cat > "$output" <<EOF
+BOT_TOKEN=$BOT_TOKEN_VALUE
+OWNER_USER_ID=$OWNER_USER_ID_VALUE
+REPORT_CHAT_ID=$REPORT_CHAT_ID_VALUE
+SOURCE_CHANNEL_IDS=$SOURCE_CHANNEL_IDS_VALUE
+DATA_PATH=data/assistant.sqlite3
+TIMEZONE=Asia/Shanghai
+POLL_TIMEOUT=25
+POLL_INTERVAL=1
+REPORT_HOUR=0
+REPORT_MINUTE=0
+UNAUTHORIZED_GROUP_ACTION=leave
+STARTUP_DROP_PENDING_UPDATES=0
+EOF
+  chmod 600 "$output"
+}
+
+write_updated_env() {
+  input=$1
+  output=$2
+  seen_token=0
+  seen_owner=0
+  seen_report=0
+  seen_sources=0
+  umask 077
+  : > "$output"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      BOT_TOKEN=*)
+        printf 'BOT_TOKEN=%s\n' "$BOT_TOKEN_VALUE" >> "$output"
+        seen_token=1
+        ;;
+      OWNER_USER_ID=*)
+        printf 'OWNER_USER_ID=%s\n' "$OWNER_USER_ID_VALUE" >> "$output"
+        seen_owner=1
+        ;;
+      REPORT_CHAT_ID=*)
+        printf 'REPORT_CHAT_ID=%s\n' "$REPORT_CHAT_ID_VALUE" >> "$output"
+        seen_report=1
+        ;;
+      SOURCE_CHANNEL_IDS=*)
+        printf 'SOURCE_CHANNEL_IDS=%s\n' "$SOURCE_CHANNEL_IDS_VALUE" >> "$output"
+        seen_sources=1
+        ;;
+      *)
+        printf '%s\n' "$line" >> "$output"
+        ;;
+    esac
+  done < "$input"
+  [ "$seen_token" -eq 1 ] || printf 'BOT_TOKEN=%s\n' "$BOT_TOKEN_VALUE" >> "$output"
+  [ "$seen_owner" -eq 1 ] || printf 'OWNER_USER_ID=%s\n' "$OWNER_USER_ID_VALUE" >> "$output"
+  [ "$seen_report" -eq 1 ] || printf 'REPORT_CHAT_ID=%s\n' "$REPORT_CHAT_ID_VALUE" >> "$output"
+  [ "$seen_sources" -eq 1 ] || printf 'SOURCE_CHANNEL_IDS=%s\n' "$SOURCE_CHANNEL_IDS_VALUE" >> "$output"
+  chmod 600 "$output"
+}
+
+wait_for_health() {
+  i=0
+  while [ "$i" -lt 45 ]; do
+    state=$(docker inspect "$CONTAINER" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)
+    if [ "$state" = "healthy" ]; then
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 2
+  done
+  return 1
+}
+
+configure_existing() {
+  ENV_PATH="$INSTALL_DIR/.env"
+  [ -f "$ENV_PATH" ] || die "尚未检测到配置，无法修改"
+  [ -f "$INSTALL_DIR/docker-compose.yml" ] || die "安装目录不完整，无法修改配置"
+  command -v docker >/dev/null 2>&1 || die "未检测到Docker"
+  docker compose version >/dev/null 2>&1 || die "未检测到Docker Compose"
+
+  TMP_DIR=$(mktemp -d /tmp/slowlink-assistant-config.XXXXXX)
+  trap cleanup 0
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  OLD_ENV="$TMP_DIR/old.env"
+  NEW_ENV="$TMP_DIR/new.env"
+  cp -p "$ENV_PATH" "$OLD_ENV"
+
+  OLD_BOT_TOKEN=$(read_env_value BOT_TOKEN "$ENV_PATH")
+  OLD_OWNER_USER_ID=$(read_env_value OWNER_USER_ID "$ENV_PATH")
+  OLD_REPORT_CHAT_ID=$(read_env_value REPORT_CHAT_ID "$ENV_PATH")
+  OLD_SOURCE_CHANNEL_IDS=$(read_env_value SOURCE_CHANNEL_IDS "$ENV_PATH")
+  [ -n "$OLD_BOT_TOKEN" ] || die "现有配置缺少BOT_TOKEN"
+  [ -n "$OLD_OWNER_USER_ID" ] || die "现有配置缺少OWNER_USER_ID"
+  [ -n "$OLD_REPORT_CHAT_ID" ] || die "现有配置缺少REPORT_CHAT_ID"
+  [ -n "$OLD_SOURCE_CHANNEL_IDS" ] || die "现有配置缺少SOURCE_CHANNEL_IDS"
+
+  BOT_TOKEN_VALUE=$(prompt_keep '[1/4]机器人Token（已配置，直接回车保留；输入新Token则替换）
+请输入：' "$OLD_BOT_TOKEN")
+  OWNER_USER_ID_VALUE=$(prompt_keep "[2/4]主人用户ID
+当前：$OLD_OWNER_USER_ID
+直接回车保留，或输入新值：" "$OLD_OWNER_USER_ID")
+  REPORT_CHAT_ID_VALUE=$(prompt_keep "[3/4]报表群ID
+当前：$OLD_REPORT_CHAT_ID
+直接回车保留，或输入新值：" "$OLD_REPORT_CHAT_ID")
+  SOURCE_CHANNEL_IDS_VALUE=$(prompt_keep "[4/4]源频道ID
+当前：$OLD_SOURCE_CHANNEL_IDS
+直接回车保留，或输入新值：" "$OLD_SOURCE_CHANNEL_IDS")
+  validate_config_values
+  write_updated_env "$ENV_PATH" "$NEW_ENV"
+
+  install -m 600 "$NEW_ENV" "$INSTALL_DIR/.env.next"
+  mv -f "$INSTALL_DIR/.env.next" "$INSTALL_DIR/.env"
+  cd "$INSTALL_DIR"
+  log "应用新配置并重建Assistant Bot"
+  if docker compose up -d --no-deps --force-recreate assistant_bot && wait_for_health; then
+    log "配置修改完成"
+    printf 'Token：已配置\n主人用户ID：%s\n报表群：%s\n源频道：%s\n' \
+      "$OWNER_USER_ID_VALUE" "$REPORT_CHAT_ID_VALUE" "$SOURCE_CHANNEL_IDS_VALUE"
+    return 0
+  fi
+
+  docker logs --tail 80 "$CONTAINER" 2>&1 || true
+  install -m 600 "$OLD_ENV" "$INSTALL_DIR/.env.rollback"
+  mv -f "$INSTALL_DIR/.env.rollback" "$INSTALL_DIR/.env"
+  if docker compose up -d --no-deps --force-recreate assistant_bot && wait_for_health; then
+    die "新配置启动失败，已恢复旧配置"
+  fi
+  die "新配置启动失败，旧配置恢复也未通过健康检查"
+}
+
 usage() {
   cat <<'EOF'
-用法：sudo sh install.sh [--version 0.1.20] [--update]
+用法：sudo sh install.sh [--version 0.1.21] [--update]
 
   --version VERSION  安装指定版本，默认安装GitHub最新稳定版
   --update           保留现有.env和data并更新程序
@@ -108,6 +282,7 @@ SlowLink Assistant Bot 管理
 1.安装
 2.更新到最新版本
 3.卸载
+4.修改配置
 0.退出
 请选择：
 EOF
@@ -128,12 +303,20 @@ EOF
       3)
         uninstall_menu
         ;;
+      4)
+        if [ ! -f "$INSTALL_DIR/.env" ]; then
+          printf '[提示]尚未检测到安装，请先选择1安装。\n' > /dev/tty
+          continue
+        fi
+        CONFIGURE_ONLY=1
+        return
+        ;;
       0)
         printf '已退出。\n' > /dev/tty
         exit 0
         ;;
       *)
-        printf '[输入错误]请输入0、1、2或3。\n' > /dev/tty
+        printf '[输入错误]请输入0、1、2、3或4。\n' > /dev/tty
         ;;
     esac
   done
@@ -173,6 +356,11 @@ case "${ID:-}" in
   ubuntu|debian) ;;
   *) die "当前仅支持Ubuntu和Debian" ;;
 esac
+
+if [ "$CONFIGURE_ONLY" -eq 1 ]; then
+  configure_existing
+  exit 0
+fi
 
 TMP_DIR=$(mktemp -d /tmp/slowlink-assistant-install.XXXXXX)
 trap cleanup 0
@@ -260,16 +448,6 @@ if [ -f "$INSTALL_DIR/.env" ]; then
   fi
 fi
 
-prompt_value() {
-  prompt=$1
-  value=""
-  while [ -z "$value" ]; do
-    printf '%s' "$prompt" > /dev/tty
-    IFS= read -r value < /dev/tty || value=""
-  done
-  printf '%s' "$value"
-}
-
 ENV_FILE="$TMP_DIR/new.env"
 if [ "$KEEP_ENV" -eq 0 ]; then
   BOT_TOKEN_VALUE=${BOT_TOKEN:-$(prompt_value '[1/4]机器人Token
@@ -284,27 +462,8 @@ if [ "$KEEP_ENV" -eq 0 ]; then
   SOURCE_CHANNEL_IDS_VALUE=${SOURCE_CHANNEL_IDS:-$(prompt_value '[4/4]源频道ID
 填写Bot需要监听的频道ID，通常以-100开头；多个用英文逗号分隔。
 请输入：')}
-  case "$BOT_TOKEN_VALUE" in *:*) ;; *) die "BOT_TOKEN格式不正确" ;; esac
-  case "$OWNER_USER_ID_VALUE" in ''|*[!0-9]*) die "OWNER_USER_ID必须是正整数" ;; esac
-  [ "$OWNER_USER_ID_VALUE" -gt 0 ] || die "OWNER_USER_ID必须大于0"
-  is_chat_ref "$REPORT_CHAT_ID_VALUE" || die "报表群ID格式不正确：请填写负数群ID或群用户名"
-  validate_source_refs "$SOURCE_CHANNEL_IDS_VALUE" || die "源频道ID格式不正确：请填写负数频道ID或频道用户名，多个用英文逗号分隔"
-  umask 077
-  cat > "$ENV_FILE" <<EOF
-BOT_TOKEN=$BOT_TOKEN_VALUE
-OWNER_USER_ID=$OWNER_USER_ID_VALUE
-REPORT_CHAT_ID=$REPORT_CHAT_ID_VALUE
-SOURCE_CHANNEL_IDS=$SOURCE_CHANNEL_IDS_VALUE
-DATA_PATH=data/assistant.sqlite3
-TIMEZONE=Asia/Shanghai
-POLL_TIMEOUT=25
-POLL_INTERVAL=1
-REPORT_HOUR=0
-REPORT_MINUTE=0
-UNAUTHORIZED_GROUP_ACTION=leave
-STARTUP_DROP_PENDING_UPDATES=0
-EOF
-  chmod 600 "$ENV_FILE"
+  validate_config_values
+  write_new_env "$ENV_FILE"
 fi
 
 log "部署到$INSTALL_DIR"
