@@ -1,6 +1,6 @@
 # 功能说明
 
-当前版本：`0.1.22`
+当前版本：`0.1.23`
 
 ## 安装和更新
 
@@ -127,7 +127,8 @@ watchdog 状态含义：
 - Docker Compose 使用 `restart: always`。
 - Docker healthcheck 会检查 Python 包和版本是否可加载。
 - 消息堆积时主循环会连续处理更新，空闲时才短暂停顿。
-- Telegram API 对临时网络错误、限流和 5xx 错误会做一次轻量重试。
+- Telegram API 对临时网络错误、读取超时、限流和 5xx 错误会做一次轻量重试。
+- 长轮询连续超时只写一行中文警告；未知程序异常仍记录完整堆栈。
 - SQLite 报表查询字段已建索引，记录变多后统计更稳。
 - 独立 systemd watchdog 监控 `slowlink_assistant_bot` 容器 CPU。
 - CPU 连续 4 次超过 85%，每次间隔 20 秒，watchdog 会重启 Bot 容器。

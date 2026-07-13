@@ -51,7 +51,7 @@ class TelegramAPI:
                     time.sleep(self._retry_delay(detail))
                     continue
                 raise TelegramAPIError(f"{method} HTTP {exc.code}: {detail}") from exc
-            except urllib.error.URLError as exc:
+            except (urllib.error.URLError, TimeoutError) as exc:
                 if attempt < self.max_attempts:
                     time.sleep(self.retry_delay)
                     continue

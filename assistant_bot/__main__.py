@@ -75,6 +75,9 @@ def main() -> int:
         except KeyboardInterrupt:
             log.info("停止运行")
             return 0
+        except TelegramAPIError as exc:
+            log.warning("Telegram 轮询异常：%s，5秒后重试", exc)
+            time.sleep(5)
         except Exception as exc:
             log.exception("主循环异常：%s", exc)
             time.sleep(5)

@@ -231,7 +231,7 @@ configure_existing() {
 
 usage() {
   cat <<'EOF'
-用法：sudo sh install.sh [--version 0.1.22] [--update]
+用法：sudo sh install.sh [--version 0.1.23] [--update]
 
   --version VERSION  安装指定版本，默认安装GitHub最新稳定版
   --update           保留现有.env和data并更新程序

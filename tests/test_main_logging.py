@@ -27,6 +27,16 @@ class MainLoggingTests(unittest.TestCase):
     def test_startup_verifies_source_channel_reactions(self):
         self.assertIn("service.verify_source_reactions()", inspect.getsource(main_module.main))
 
+    def test_expected_poll_error_logs_one_warning_without_traceback(self):
+        source = inspect.getsource(main_module.main)
+
+        self.assertEqual(source.count("except TelegramAPIError as exc:"), 2)
+        self.assertIn('log.warning("Telegram 轮询异常：%s，5秒后重试", exc)', source)
+        self.assertLess(
+            source.rindex("except TelegramAPIError as exc:"),
+            source.index("except Exception as exc:"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

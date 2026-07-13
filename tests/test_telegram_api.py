@@ -2,7 +2,7 @@ import unittest
 import urllib.error
 
 import assistant_bot.telegram_api as telegram_api
-from assistant_bot.telegram_api import TelegramAPI
+from assistant_bot.telegram_api import TelegramAPI, TelegramAPIError
 
 
 class _FakeResponse:
@@ -51,6 +51,48 @@ class TelegramAPITests(unittest.TestCase):
             telegram_api.time.sleep = original_sleep
 
         self.assertEqual(result["username"], "slowlinkbot")
+        self.assertEqual(len(calls), 2)
+
+    def test_request_retries_once_after_bare_timeout(self):
+        calls = []
+
+        def fake_urlopen(req, timeout):
+            calls.append((req.full_url, timeout))
+            if len(calls) == 1:
+                raise TimeoutError("The read operation timed out")
+            return _FakeResponse(b'{"ok": true, "result": {"id": 123, "username": "slowlinkbot"}}')
+
+        original_urlopen = telegram_api.urllib.request.urlopen
+        original_sleep = telegram_api.time.sleep
+        telegram_api.urllib.request.urlopen = fake_urlopen
+        telegram_api.time.sleep = lambda _seconds: None
+        try:
+            result = TelegramAPI("123:abc").get_me()
+        finally:
+            telegram_api.urllib.request.urlopen = original_urlopen
+            telegram_api.time.sleep = original_sleep
+
+        self.assertEqual(result["username"], "slowlinkbot")
+        self.assertEqual(len(calls), 2)
+
+    def test_repeated_bare_timeout_becomes_telegram_api_error(self):
+        calls = []
+
+        def fake_urlopen(req, timeout):
+            calls.append((req.full_url, timeout))
+            raise TimeoutError("The read operation timed out")
+
+        original_urlopen = telegram_api.urllib.request.urlopen
+        original_sleep = telegram_api.time.sleep
+        telegram_api.urllib.request.urlopen = fake_urlopen
+        telegram_api.time.sleep = lambda _seconds: None
+        try:
+            with self.assertRaisesRegex(TelegramAPIError, "getMe network error: The read operation timed out"):
+                TelegramAPI("123:abc").get_me()
+        finally:
+            telegram_api.urllib.request.urlopen = original_urlopen
+            telegram_api.time.sleep = original_sleep
+
         self.assertEqual(len(calls), 2)
 
     def test_send_message_accepts_inline_keyboard(self):
