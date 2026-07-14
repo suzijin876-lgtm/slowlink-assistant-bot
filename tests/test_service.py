@@ -17,6 +17,8 @@ class FakeAPI:
     def __init__(self):
         self.copied = []
         self.sent = []
+        self.photos = []
+        self.photo_attempts = []
         self.left = []
         self.pinned = []
         self.unpinned = []
@@ -31,6 +33,7 @@ class FakeAPI:
         self.next_copy_message_id = 900
         self.next_send_message_id = 100
         self.fail_send_for_chats = set()
+        self.fail_photo_for_chats = set()
         self.fail_pin = False
         self.fail_delete = False
         self.me = {"id": 777, "username": "slowlinkbot"}
@@ -45,6 +48,14 @@ class FakeAPI:
             raise RuntimeError("send failed")
         self.sent.append((chat_id, text, disable_web_page_preview))
         self.sent_reply_markups.append(reply_markup)
+        self.next_send_message_id += 1
+        return {"message_id": self.next_send_message_id}
+
+    def send_photo(self, chat_id, photo, caption):
+        self.photo_attempts.append((chat_id, photo, caption))
+        if chat_id in self.fail_photo_for_chats:
+            raise RuntimeError("photo failed")
+        self.photos.append((chat_id, photo, caption))
         self.next_send_message_id += 1
         return {"message_id": self.next_send_message_id}
 
@@ -1158,6 +1169,30 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertEqual(self.api.unpinned, [(-1009, 77)])
         self.assertEqual(self.store.get_state("last_report_pin_message_id"), "101")
 
+    def test_scheduled_report_uses_configured_cover_and_pins_photo(self):
+        self.make_service()
+        self.store.set_state("scheduled_report_cover_file_id", "cover-file-id")
+
+        self.service.run_due_reports(datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
+
+        self.assertEqual(len(self.api.photos), 1)
+        self.assertEqual(self.api.photos[0][0], -1009)
+        self.assertEqual(self.api.photos[0][1], "cover-file-id")
+        self.assertIn("📊昨日日报", self.api.photos[0][2])
+        self.assertEqual(self.api.sent, [])
+        self.assertEqual(self.api.pinned, [(-1009, 101, True)])
+
+    def test_current_report_stays_text_only_when_cover_is_configured(self):
+        self.make_service()
+        self.store.set_state("scheduled_report_cover_file_id", "cover-file-id")
+
+        self.service.send_current_report(-1009)
+
+        self.assertEqual(len(self.api.sent), 1)
+        self.assertEqual(self.api.sent[0][0], -1009)
+        self.assertIn("当前概览", self.api.sent[0][1])
+        self.assertEqual(self.api.photo_attempts, [])
+
     def test_daily_and_weekly_reports_are_combined_into_one_message(self):
         self.make_service()
         now = datetime(2026, 7, 13, 0, 0, tzinfo=TZ)
@@ -1210,6 +1245,23 @@ class AssistantServiceTests(unittest.TestCase):
         for kind in ("daily", "weekly", "monthly"):
             period = scheduled_period(kind, now)
             self.assertTrue(self.store.was_report_sent(kind, period.key))
+
+    def test_combined_reports_use_one_cover_photo(self):
+        self.make_service()
+        self.store.set_state("scheduled_report_cover_file_id", "cover-file-id")
+        now = datetime(2026, 6, 1, 0, 0, tzinfo=TZ)
+
+        self.service.run_due_reports(now)
+
+        self.assertEqual(len(self.api.photos), 1)
+        self.assertEqual(self.api.photos[0][1], "cover-file-id")
+        self.assertEqual(self.api.photos[0][2].count("📊"), 3)
+        self.assertIn("📊昨日日报", self.api.photos[0][2])
+        self.assertIn("📊上周周报", self.api.photos[0][2])
+        self.assertIn("📊上月月报", self.api.photos[0][2])
+        self.assertLessEqual(len(self.api.photos[0][2]), 1024)
+        self.assertEqual(self.api.sent, [])
+        self.assertEqual(self.api.pinned, [(-1009, 101, True)])
 
     def test_combined_report_failure_marks_no_period_as_sent(self):
         self.make_service()
@@ -1484,6 +1536,52 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("日报发送失败", self.api.sent[0][1])
         period = __import__("assistant_bot.reports", fromlist=["scheduled_period"]).scheduled_period("daily", datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
         self.assertFalse(self.store.was_report_sent("daily", period.key))
+
+    def test_cover_failure_falls_back_to_text_and_marks_report_sent(self):
+        self.make_service()
+        self.store.set_state("scheduled_report_cover_file_id", "invalid-cover")
+        self.api.fail_photo_for_chats.add(-1009)
+        now = datetime(2026, 7, 10, 0, 0, tzinfo=TZ)
+
+        with self.assertLogs("assistant_bot.service", level="WARNING") as captured:
+            self.service.run_due_reports(now)
+
+        self.assertEqual(len(self.api.photo_attempts), 1)
+        self.assertEqual(self.api.sent[0][0], -1009)
+        self.assertIn("📊昨日日报", self.api.sent[0][1])
+        self.assertEqual(self.api.sent[1][0], 42)
+        self.assertIn("封面发送失败，已改发纯文字", self.api.sent[1][1])
+        self.assertEqual(self.api.pinned, [(-1009, 101, True)])
+        self.assertTrue(self.store.was_report_sent("daily", scheduled_period("daily", now).key))
+        self.assertIn("日报封面发送失败，已改发纯文字", "\n".join(captured.output))
+
+    def test_overlong_photo_caption_falls_back_to_text(self):
+        self.make_service()
+        self.store.set_state("scheduled_report_cover_file_id", "cover-file-id")
+        message_text = "文" * 1025
+
+        self.service._send_scheduled_report(message_text, "日报", "日期：2026-07-09")
+
+        self.assertEqual(self.api.photo_attempts, [])
+        self.assertEqual(self.api.sent[0], (-1009, message_text, True))
+        self.assertEqual(self.api.sent[1][0], 42)
+        self.assertIn("简报文字超过图片说明长度限制", self.api.sent[1][1])
+
+    def test_cover_and_text_failure_leave_report_unmarked(self):
+        self.make_service()
+        self.store.set_state("scheduled_report_cover_file_id", "invalid-cover")
+        self.api.fail_photo_for_chats.add(-1009)
+        self.api.fail_send_for_chats.add(-1009)
+        now = datetime(2026, 7, 10, 0, 0, tzinfo=TZ)
+
+        self.service.run_due_reports(now)
+
+        self.assertEqual(len(self.api.photo_attempts), 1)
+        self.assertEqual(len(self.api.sent), 1)
+        self.assertEqual(self.api.sent[0][0], 42)
+        self.assertIn("日报发送失败", self.api.sent[0][1])
+        self.assertEqual(self.api.pinned, [])
+        self.assertFalse(self.store.was_report_sent("daily", scheduled_period("daily", now).key))
 
     def test_report_pin_failure_notifies_owner_but_marks_sent(self):
         self.make_service()

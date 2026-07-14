@@ -31,6 +31,7 @@ UNAUTHORIZED_CHAT_NOTICE_INTERVAL = timedelta(hours=1)
 WATCHDOG_STATUS_MAX_AGE = timedelta(seconds=120)
 LAST_REPORT_PIN_STATE_KEY = "last_report_pin_message_id"
 REPORT_COVER_STATE_KEY = "scheduled_report_cover_file_id"
+PHOTO_CAPTION_LIMIT = 1024
 MODERATION_MIN_DOWNVOTES = 2
 MODERATION_MIN_POOPS = 2
 MODERATION_DELETE_DELAY = timedelta(minutes=1)
@@ -850,6 +851,40 @@ class AssistantService:
             disable_web_page_preview=True,
         )
 
+    def _send_scheduled_report(self, message_text: str, log_name: str, notice_context: str):
+        cover = self.store.get_state(REPORT_COVER_STATE_KEY)
+        cover_error = None
+        if cover and len(message_text) <= PHOTO_CAPTION_LIMIT:
+            try:
+                return self.api.send_photo(
+                    self.config.report_chat_id_for_api,
+                    cover,
+                    message_text,
+                )
+            except Exception as exc:
+                cover_error = exc
+        elif cover:
+            cover_error = ValueError("简报文字超过图片说明长度限制")
+
+        if cover_error is not None:
+            LOG.warning(
+                "%s封面发送失败，已改发纯文字：%s 原因=%s",
+                log_name,
+                notice_context,
+                cover_error,
+            )
+
+        result = self.api.send_message(
+            self.config.report_chat_id_for_api,
+            message_text,
+            disable_web_page_preview=True,
+        )
+        if cover_error is not None:
+            self._send_owner_notice(
+                f"⚠️{log_name}封面发送失败，已改发纯文字\n{notice_context}\n原因：{cover_error}"
+            )
+        return result
+
     def run_due_reports(self, now: datetime | None = None) -> None:
         now = (now or self._now()).astimezone(self.tz)
         self._backup_database(now)
@@ -905,7 +940,7 @@ class AssistantService:
             notice_context = f"{period_field}：{period_label}"
 
         try:
-            result = self.api.send_message(self.config.report_chat_id_for_api, message_text, disable_web_page_preview=True)
+            result = self._send_scheduled_report(message_text, log_name, notice_context)
         except Exception as exc:
             LOG.warning("%s发送失败：%s 原因=%s", log_name, log_context, exc)
             self._send_owner_notice(f"⚠️{log_name}发送失败\n{notice_context}\n原因：{exc}")
