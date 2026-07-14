@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 from . import __version__
 from .config import BotConfig, chat_ref_for_api, chat_username_ref, normalize_chat_ref
 from .reports import (
+    Period,
     format_count_change,
+    format_data_range,
     format_display_time,
     format_period_label,
     format_report,
@@ -61,8 +63,9 @@ class AssistantService:
         self.api = api
         self.store = store
         self.tz = ZoneInfo(config.timezone)
-        self.started_at = datetime.now(self.tz)
         self.clock = clock or (lambda: datetime.now(self.tz))
+        self.started_at = self._now()
+        self.store.statistics_coverage_start(self.started_at)
         self.consecutive_copy_failures = 0
         self.copy_failure_alert_active = False
         self.copy_failure_alert_times: dict[str, datetime] = {}
@@ -75,6 +78,17 @@ class AssistantService:
         if now.tzinfo is None:
             return now.replace(tzinfo=self.tz)
         return now.astimezone(self.tz)
+
+    def _statistics_coverage_start(self, reference: datetime | None = None) -> datetime:
+        fallback = self.started_at
+        if reference is not None and reference < fallback:
+            fallback = reference
+        return self.store.statistics_coverage_start(fallback)
+
+    def _comparison_count(self, period: Period, coverage_start: datetime) -> int | None:
+        if coverage_start > period.start:
+            return None
+        return self.store.report_stats_between(period.start, period.end).success_count
 
     def handle_update(self, update: dict[str, Any]) -> None:
         try:
@@ -593,11 +607,19 @@ class AssistantService:
                 ),
             )
             self.store.set_state(REPORT_COVER_STATE_KEY, str(selected["file_id"]))
-            self.api.send_message(
-                self.config.owner_user_id,
-                "✅简报封面已更新\n适用于：日报、周报、月报",
-            )
-            LOG.info("简报封面已更新")
+            try:
+                self.api.send_photo(
+                    self.config.owner_user_id,
+                    str(selected["file_id"]),
+                    self._cover_preview_text(),
+                )
+                LOG.info("简报封面已更新，私聊预览发送完成")
+            except Exception as exc:
+                LOG.warning("简报封面已更新，但私聊预览发送失败：原因=%s", exc)
+                self.api.send_message(
+                    self.config.owner_user_id,
+                    f"✅简报封面已更新\n⚠️私聊预览发送失败\n原因：{exc}",
+                )
             return
 
         enabled = bool(self.store.get_state(REPORT_COVER_STATE_KEY))
@@ -606,6 +628,35 @@ class AssistantService:
             self.config.owner_user_id,
             f"🖼️简报封面：{status}\n发送图片并附带 /cover 即可设置\n发送 /cover off 可停用",
         )
+
+    def _cover_preview_text(self) -> str:
+        now = self._now()
+        period = manual_period("weekly", now)
+        if period.end <= period.start:
+            return "✅简报封面已更新\n📊封面预览\n本周统计尚未开始"
+        coverage_start = self._statistics_coverage_start(now)
+        stats = self.store.report_stats_between(period.start, period.end)
+        comparison_period = Period(
+            "weekly",
+            period.start - timedelta(days=7),
+            period.end - timedelta(days=7),
+        )
+        previous_count = self._comparison_count(comparison_period, coverage_start)
+        report_text = format_report(
+            "weekly",
+            period,
+            stats,
+            now,
+            include_diagnostics=False,
+            previous_success_count=previous_count,
+            include_moderation=False,
+            include_comparison=True,
+            data_start=coverage_start if coverage_start > period.start else None,
+            title_override="本周进度（封面预览）",
+            comparison_label_override="较上周同期",
+            generated_at_label=True,
+        )
+        return f"✅简报封面已更新\n{report_text}"
 
     def _handle_report_group_command(self, chat_id: str, user_id: int, text: str) -> None:
         if user_id != self.config.owner_user_id or not text.startswith("/"):
@@ -796,18 +847,23 @@ class AssistantService:
         now = self._now()
         today = manual_period("daily", now)
         if not include_diagnostics:
+            coverage_start = self._statistics_coverage_start(now)
             stats = self.store.report_stats_between(today.start, today.end)
-            previous_stats = self.store.report_stats_between(
+            comparison_period = Period(
+                "daily",
                 today.start - timedelta(days=1),
                 today.end - timedelta(days=1),
             )
+            previous_count = self._comparison_count(comparison_period, coverage_start)
             recent = format_display_time(stats.last_success_at, now)
             lines = [
                 "📌当前概览",
                 f"日期：{today.start:%Y-%m-%d}",
                 f"转发：{stats.success_count}条",
-                format_count_change("较昨日同期", stats.success_count, previous_stats.success_count),
+                format_count_change("较昨日同期", stats.success_count, previous_count),
             ]
+            if coverage_start > today.start:
+                lines.insert(2, format_data_range(today, coverage_start))
             if stats.peak_hour is not None:
                 lines.extend(
                     [
@@ -896,6 +952,7 @@ class AssistantService:
         now = (now or self._now()).astimezone(self.tz)
         self._backup_database(now)
         self._cleanup_old_events(now)
+        coverage_start = self._statistics_coverage_start(now)
         pending = []
         for kind in ("daily", "weekly", "monthly"):
             if not should_run_report(kind, now, self.config.report_hour, self.config.report_minute):
@@ -905,7 +962,7 @@ class AssistantService:
                 continue
             stats = self.store.report_stats_between(period.start, period.end)
             comparison_period = previous_period(period)
-            previous_stats = self.store.report_stats_between(comparison_period.start, comparison_period.end)
+            previous_count = self._comparison_count(comparison_period, coverage_start)
             moderation_stats = self.store.moderation_stats_between(period.start, period.end)
             pending.append(
                 {
@@ -920,10 +977,16 @@ class AssistantService:
                         now,
                         moderation_stats=moderation_stats,
                         include_diagnostics=False,
-                        previous_success_count=previous_stats.success_count,
+                        previous_success_count=previous_count,
                         include_moderation=False,
+                        include_comparison=True,
+                        data_start=coverage_start if coverage_start > period.start else None,
                     ),
                     "title": report_name(kind),
+                    "comparison_period": comparison_period,
+                    "previous_success_count": previous_count,
+                    "comparison_status": "available" if previous_count is not None else "unavailable",
+                    "data_start": max(period.start, coverage_start),
                 }
             )
 
@@ -963,6 +1026,29 @@ class AssistantService:
                 self._send_owner_notice(f"⚠️{log_name}置顶失败\n{notice_context}\n原因：{exc}")
 
         for item in pending:
+            try:
+                self.store.save_report_snapshot(
+                    period_type=item["kind"],
+                    period_key=item["period"].key,
+                    period_start=item["period"].start,
+                    period_end=item["period"].end,
+                    data_start=item["data_start"],
+                    success_count=item["stats"].success_count,
+                    failure_count=item["stats"].failure_count,
+                    deleted_count=item["moderation_stats"].deleted_count,
+                    comparison_start=item["comparison_period"].start,
+                    comparison_end=item["comparison_period"].end,
+                    previous_success_count=item["previous_success_count"],
+                    comparison_status=item["comparison_status"],
+                    message_id=message_id,
+                    report_text=item["text"],
+                    sent_at=now,
+                )
+            except Exception as exc:
+                LOG.warning("报表快照保存失败：类型=%s 周期=%s 原因=%s", item["kind"], item["period"].key, exc)
+                self._send_owner_notice(
+                    f"⚠️报表已发送，但快照保存失败\n类型：{item['title']}\n周期：{item['period'].key}"
+                )
             self.store.mark_report_sent(item["kind"], item["period"].key, now)
 
         if combined:

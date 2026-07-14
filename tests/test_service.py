@@ -414,6 +414,7 @@ class AssistantServiceTests(unittest.TestCase):
 
     def test_group_current_report_hides_runtime_diagnostics_but_private_keeps_them(self):
         self.make_service()
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 7, 9, 0, 0, tzinfo=TZ).isoformat())
         self.store.record_copy_success(
             "-1001", "Source", 54, "42", 899, datetime(2026, 7, 9, 10, 0, tzinfo=TZ)
         )
@@ -934,7 +935,8 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertEqual(self.api.sent[0][0], -1009)
         self.assertIn("当前概览", self.api.sent[0][1])
         self.assertIn("转发：1条", self.api.sent[0][1])
-        self.assertIn("较昨日同期：增加1条", self.api.sent[0][1])
+        self.assertIn("较昨日同期：暂无可比数据", self.api.sent[0][1])
+        self.assertNotIn("较昨日同期：增加1条", self.api.sent[0][1])
 
     def test_report_group_id_command_confirms_configuration_without_exposing_id(self):
         self.make_service()
@@ -996,7 +998,12 @@ class AssistantServiceTests(unittest.TestCase):
             },
         })
         self.assertEqual(self.store.get_state("scheduled_report_cover_file_id"), "cover-a")
-        self.assertIn("简报封面已更新", self.api.sent[-1][1])
+        self.assertEqual(self.api.photos[-1][0], 42)
+        self.assertEqual(self.api.photos[-1][1], "cover-a")
+        self.assertIn("简报封面已更新", self.api.photos[-1][2])
+        self.assertIn("📊本周进度（封面预览）", self.api.photos[-1][2])
+        self.assertIn("较上周同期：暂无可比数据", self.api.photos[-1][2])
+        self.assertNotIn(-1009, [chat_id for chat_id, _, _ in self.api.photos])
 
         self.service.handle_update({
             "update_id": 202,
@@ -1009,6 +1016,7 @@ class AssistantServiceTests(unittest.TestCase):
             },
         })
         self.assertEqual(self.store.get_state("scheduled_report_cover_file_id"), "cover-b")
+        self.assertEqual(self.api.photos[-1][0:2], (42, "cover-b"))
 
         self.service.handle_update({
             "update_id": 203,
@@ -1049,6 +1057,26 @@ class AssistantServiceTests(unittest.TestCase):
 
         self.assertIsNone(self.store.get_state("scheduled_report_cover_file_id"))
         self.assertEqual(self.api.sent, [])
+
+    def test_cover_preview_failure_keeps_cover_and_reports_private_warning(self):
+        self.make_service()
+        self.api.fail_photo_for_chats.add(42)
+
+        self.service.handle_update({
+            "update_id": 207,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "caption": "/cover",
+                "photo": [{"file_id": "cover-kept", "width": 1280, "height": 720}],
+            },
+        })
+
+        self.assertEqual(self.store.get_state("scheduled_report_cover_file_id"), "cover-kept")
+        self.assertEqual(self.api.photo_attempts[-1][0:2], (42, "cover-kept"))
+        self.assertIn("简报封面已更新", self.api.sent[-1][1])
+        self.assertIn("私聊预览发送失败", self.api.sent[-1][1])
 
     def test_non_cover_media_caption_does_not_run_owner_command(self):
         self.make_service()
@@ -1144,6 +1172,7 @@ class AssistantServiceTests(unittest.TestCase):
 
     def test_scheduled_daily_report_goes_to_fixed_group_only(self):
         self.make_service()
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 7, 8, 0, 0, tzinfo=TZ).isoformat())
         self.store.record_copy_success("-1001", "Source", 0, "42", 8, datetime(2026, 7, 8, 1, 0, tzinfo=TZ))
         self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 9, 1, 0, tzinfo=TZ))
         self.store.record_moderation_post("-1001", "Source", 2, datetime(2026, 7, 9, 2, 0, tzinfo=TZ))
@@ -1174,6 +1203,44 @@ class AssistantServiceTests(unittest.TestCase):
         logs = "\n".join(captured.output)
         self.assertIn("日报发送完成：日期=2026-07-09 转发=1条 异常=0次 纠错删除=1条", logs)
         self.assertNotIn("类型=daily", logs)
+
+    def test_scheduled_report_does_not_treat_missing_history_as_zero(self):
+        self.make_service()
+        self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 9, 1, 0, tzinfo=TZ))
+
+        self.service.run_due_reports(datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
+
+        text = self.api.sent[0][1]
+        self.assertIn("数据范围：2026-07-09 01:00至2026-07-09", text)
+        self.assertIn("较前日：暂无可比数据", text)
+        self.assertNotIn("较前日：增加1条", text)
+
+    def test_scheduled_report_preserves_real_zero_when_history_is_fully_covered(self):
+        self.make_service()
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 7, 8, 0, 0, tzinfo=TZ).isoformat())
+        self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 9, 1, 0, tzinfo=TZ))
+
+        self.service.run_due_reports(datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
+
+        self.assertIn("较前日：增加1条", self.api.sent[0][1])
+        self.assertNotIn("暂无可比数据", self.api.sent[0][1])
+
+    def test_successful_scheduled_report_saves_auditable_snapshot(self):
+        self.make_service()
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 7, 8, 0, 0, tzinfo=TZ).isoformat())
+        self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 9, 1, 0, tzinfo=TZ))
+        now = datetime(2026, 7, 10, 0, 0, tzinfo=TZ)
+
+        self.service.run_due_reports(now)
+
+        period = scheduled_period("daily", now)
+        snapshot = self.store.get_report_snapshot("daily", period.key)
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot["success_count"], 1)
+        self.assertEqual(snapshot["previous_success_count"], 0)
+        self.assertEqual(snapshot["comparison_status"], "available")
+        self.assertEqual(snapshot["message_id"], 101)
+        self.assertIn("较前日：增加1条", snapshot["report_text"])
 
     def test_scheduled_report_unpins_previous_report_after_new_pin(self):
         self.make_service()

@@ -119,6 +119,21 @@ def _format_average(count: int, days: int) -> str:
     return f"{count / days:.1f}".rstrip("0").rstrip(".")
 
 
+def format_data_range(period: Period, data_start: datetime) -> str:
+    actual_start = max(period.start, data_start)
+    if actual_start >= period.end:
+        return "数据范围：该周期无历史数据"
+    display_end = period.end
+    end_is_boundary = not any((display_end.hour, display_end.minute, display_end.second, display_end.microsecond))
+    if end_is_boundary:
+        display_end -= timedelta(microseconds=1)
+    start_format = "%Y-%m-%d" if not any(
+        (actual_start.hour, actual_start.minute, actual_start.second, actual_start.microsecond)
+    ) else "%Y-%m-%d %H:%M"
+    end_format = "%Y-%m-%d" if end_is_boundary else "%Y-%m-%d %H:%M"
+    return f"数据范围：{actual_start:{start_format}}至{display_end:{end_format}}"
+
+
 def start_of_day(now: datetime) -> datetime:
     return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -191,7 +206,9 @@ def _moderation_lines(moderation_stats: ModerationStats | None) -> list[str]:
     return lines
 
 
-def format_count_change(label: str, current_count: int, previous_count: int) -> str:
+def format_count_change(label: str, current_count: int, previous_count: int | None) -> str:
+    if previous_count is None:
+        return f"{label}：暂无可比数据"
     difference = int(current_count) - int(previous_count)
     if difference > 0:
         value = f"增加{difference}条"
@@ -211,8 +228,30 @@ def format_report(
     include_diagnostics: bool = True,
     previous_success_count: int | None = None,
     include_moderation: bool = True,
+    include_comparison: bool | None = None,
+    data_start: datetime | None = None,
+    title_override: str | None = None,
+    comparison_label_override: str | None = None,
+    generated_at_label: bool = False,
 ) -> str:
-    title = REPORT_TITLES.get(kind, report_name(kind))
+    if period.end <= period.start:
+        raise ValueError("报表周期结束时间必须晚于开始时间")
+    numeric_counts = (
+        stats.success_count,
+        stats.failure_count,
+        stats.total_count,
+        stats.peak_hour_count,
+        stats.peak_day_count,
+        stats.active_day_count,
+    )
+    if any(int(value) < 0 for value in numeric_counts):
+        raise ValueError("报表统计数量不能为负数")
+    if int(stats.success_count) + int(stats.failure_count) != int(stats.total_count):
+        raise ValueError("报表成功数、失败数与总数不一致")
+    if previous_success_count is not None and int(previous_success_count) < 0:
+        raise ValueError("上一周期统计数量不能为负数")
+
+    title = title_override or REPORT_TITLES.get(kind, report_name(kind))
     period_field = report_period_field(kind)
     period_label = format_period_label(period)
     status = "正常" if stats.failure_count == 0 else "有异常"
@@ -221,10 +260,18 @@ def format_report(
         f"{period_field}：{period_label}",
         f"转发：{stats.success_count}条",
     ]
-    if previous_success_count is not None:
+    if generated_at_label:
+        lines.insert(2, f"数据截至：{generated_at:%m-%d %H:%M}")
+    activity_period = period
+    if data_start is not None and data_start > period.start:
+        lines.insert(2, format_data_range(period, data_start))
+        if data_start < period.end:
+            activity_period = Period(period.kind, data_start, period.end)
+    should_compare = previous_success_count is not None if include_comparison is None else include_comparison
+    if should_compare:
         lines.append(
             format_count_change(
-                COMPARISON_LABELS.get(kind, "较前期"),
+                comparison_label_override or COMPARISON_LABELS.get(kind, "较前期"),
                 stats.success_count,
                 previous_success_count,
             )
@@ -234,7 +281,7 @@ def format_report(
         lines.append(f"高峰转发：{stats.peak_hour_count}条")
         lines.append(f"首次转发：{_format_report_time(stats.first_success_at, period, generated_at)}")
     elif kind in {"weekly", "monthly"}:
-        lines.append(f"日均：{_format_average(stats.success_count, _covered_days(period))}条")
+        lines.append(f"日均：{_format_average(stats.success_count, _covered_days(activity_period))}条")
         lines.append(f"活跃天数：{stats.active_day_count}天")
         if stats.peak_day:
             lines.append(f"最活跃日：{stats.peak_day[5:]}（{stats.peak_day_count}条）")

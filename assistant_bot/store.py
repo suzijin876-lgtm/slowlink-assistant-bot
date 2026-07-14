@@ -7,6 +7,9 @@ from pathlib import Path
 from threading import RLock
 
 
+STATISTICS_COVERAGE_STATE_KEY = "statistics_coverage_started_at"
+
+
 @dataclass(frozen=True)
 class Stats:
     success_count: int
@@ -62,6 +65,28 @@ class EventStore:
                 CREATE TABLE IF NOT EXISTS sent_reports (
                     period_type TEXT NOT NULL,
                     period_key TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    PRIMARY KEY (period_type, period_key)
+                )
+                """
+            )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS report_snapshots (
+                    period_type TEXT NOT NULL,
+                    period_key TEXT NOT NULL,
+                    period_start TEXT NOT NULL,
+                    period_end TEXT NOT NULL,
+                    data_start TEXT NOT NULL,
+                    success_count INTEGER NOT NULL,
+                    failure_count INTEGER NOT NULL,
+                    deleted_count INTEGER NOT NULL,
+                    comparison_start TEXT NOT NULL,
+                    comparison_end TEXT NOT NULL,
+                    previous_success_count INTEGER,
+                    comparison_status TEXT NOT NULL,
+                    message_id INTEGER,
+                    report_text TEXT NOT NULL,
                     sent_at TEXT NOT NULL,
                     PRIMARY KEY (period_type, period_key)
                 )
@@ -631,6 +656,107 @@ class EventStore:
                 "INSERT OR IGNORE INTO sent_reports (period_type, period_key, sent_at) VALUES (?, ?, ?)",
                 (period_type, period_key, at.isoformat()),
             )
+
+    def get_report_snapshot(self, period_type: str, period_key: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM report_snapshots WHERE period_type = ? AND period_key = ?",
+                (str(period_type), str(period_key)),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def save_report_snapshot(
+        self,
+        *,
+        period_type: str,
+        period_key: str,
+        period_start: datetime,
+        period_end: datetime,
+        data_start: datetime,
+        success_count: int,
+        failure_count: int,
+        deleted_count: int,
+        comparison_start: datetime,
+        comparison_end: datetime,
+        previous_success_count: int | None,
+        comparison_status: str,
+        message_id: int,
+        report_text: str,
+        sent_at: datetime,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO report_snapshots (
+                    period_type, period_key, period_start, period_end, data_start,
+                    success_count, failure_count, deleted_count,
+                    comparison_start, comparison_end, previous_success_count,
+                    comparison_status, message_id, report_text, sent_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(period_type, period_key) DO UPDATE SET
+                    period_start = excluded.period_start,
+                    period_end = excluded.period_end,
+                    data_start = excluded.data_start,
+                    success_count = excluded.success_count,
+                    failure_count = excluded.failure_count,
+                    deleted_count = excluded.deleted_count,
+                    comparison_start = excluded.comparison_start,
+                    comparison_end = excluded.comparison_end,
+                    previous_success_count = excluded.previous_success_count,
+                    comparison_status = excluded.comparison_status,
+                    message_id = excluded.message_id,
+                    report_text = excluded.report_text,
+                    sent_at = excluded.sent_at
+                """,
+                (
+                    str(period_type),
+                    str(period_key),
+                    period_start.isoformat(),
+                    period_end.isoformat(),
+                    data_start.isoformat(),
+                    max(0, int(success_count)),
+                    max(0, int(failure_count)),
+                    max(0, int(deleted_count)),
+                    comparison_start.isoformat(),
+                    comparison_end.isoformat(),
+                    None if previous_success_count is None else max(0, int(previous_success_count)),
+                    str(comparison_status),
+                    int(message_id),
+                    str(report_text),
+                    sent_at.isoformat(),
+                ),
+            )
+
+    def statistics_coverage_start(self, fallback: datetime) -> datetime:
+        def normalize(value: datetime) -> datetime:
+            if fallback.tzinfo is None:
+                return value.replace(tzinfo=None) if value.tzinfo is not None else value
+            if value.tzinfo is None:
+                return value.replace(tzinfo=fallback.tzinfo)
+            return value.astimezone(fallback.tzinfo)
+
+        candidates = [normalize(fallback)]
+        stored = self.get_state(STATISTICS_COVERAGE_STATE_KEY)
+        if stored:
+            try:
+                candidates.append(normalize(datetime.fromisoformat(stored)))
+            except ValueError:
+                pass
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT created_at FROM copy_events ORDER BY created_at_ts ASC LIMIT 1"
+            ).fetchone()
+        if row and row["created_at"]:
+            try:
+                candidates.append(normalize(datetime.fromisoformat(str(row["created_at"]))))
+            except ValueError:
+                pass
+
+        coverage_start = min(candidates)
+        serialized = coverage_start.isoformat()
+        if stored != serialized:
+            self.set_state(STATISTICS_COVERAGE_STATE_KEY, serialized)
+        return coverage_start
 
     def get_state(self, key: str) -> str | None:
         with self._lock:

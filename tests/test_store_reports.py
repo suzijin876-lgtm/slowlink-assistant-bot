@@ -19,6 +19,44 @@ TZ = ZoneInfo("Asia/Shanghai")
 
 
 class StoreAndReportTests(unittest.TestCase):
+    def test_statistics_coverage_start_preserves_service_start_before_first_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "assistant.sqlite3"
+            started_at = datetime(2026, 7, 10, 0, 30, tzinfo=TZ)
+            store = EventStore(db_path)
+            try:
+                self.assertEqual(store.statistics_coverage_start(started_at), started_at)
+                store.record_copy_success(
+                    "-1001",
+                    "source",
+                    10,
+                    "42",
+                    99,
+                    datetime(2026, 7, 10, 1, 13, tzinfo=TZ),
+                )
+                self.assertEqual(store.statistics_coverage_start(datetime(2026, 7, 15, 6, 0, tzinfo=TZ)), started_at)
+            finally:
+                store.close()
+
+            reopened = EventStore(db_path)
+            try:
+                self.assertEqual(reopened.statistics_coverage_start(datetime(2026, 7, 15, 6, 0, tzinfo=TZ)), started_at)
+            finally:
+                reopened.close()
+
+    def test_statistics_coverage_start_backfills_existing_database_from_first_event(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "assistant.sqlite3")
+            first_event = datetime(2026, 7, 10, 1, 13, tzinfo=TZ)
+            try:
+                store.record_copy_success("-1001", "source", 10, "42", 99, first_event)
+
+                coverage_start = store.statistics_coverage_start(datetime(2026, 7, 15, 6, 0, tzinfo=TZ))
+            finally:
+                store.close()
+
+        self.assertEqual(coverage_start, first_event)
+
     def test_moderation_schema_migrates_poop_count(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "assistant.sqlite3"
@@ -493,6 +531,120 @@ class StoreAndReportTests(unittest.TestCase):
                     include_moderation=False,
                 )
                 self.assertIn(expected, text)
+
+    def test_report_distinguishes_missing_history_from_a_real_zero(self):
+        stats = Stats(
+            success_count=39,
+            failure_count=0,
+            total_count=39,
+            first_success_at="2026-07-13T00:57:00+08:00",
+            last_success_at="2026-07-15T00:56:00+08:00",
+            peak_hour=0,
+            peak_hour_count=5,
+            peak_day="2026-07-14",
+            peak_day_count=23,
+            last_failure="-",
+            active_day_count=3,
+        )
+        period = scheduled_period("weekly", datetime(2026, 7, 13, 0, 0, tzinfo=TZ))
+
+        incomplete = format_report(
+            "weekly",
+            period,
+            stats,
+            datetime(2026, 7, 13, 0, 0, tzinfo=TZ),
+            previous_success_count=None,
+            include_comparison=True,
+            data_start=datetime(2026, 7, 10, 1, 13, tzinfo=TZ),
+            include_diagnostics=False,
+            include_moderation=False,
+        )
+        complete_zero = format_report(
+            "weekly",
+            period,
+            stats,
+            datetime(2026, 7, 13, 0, 0, tzinfo=TZ),
+            previous_success_count=0,
+            include_comparison=True,
+            include_diagnostics=False,
+            include_moderation=False,
+        )
+
+        self.assertIn("数据范围：2026-07-10 01:13至2026-07-12", incomplete)
+        self.assertIn("较前周：暂无可比数据", incomplete)
+        self.assertNotIn("较前周：增加39条", incomplete)
+        self.assertIn("较前周：增加39条", complete_zero)
+        self.assertNotIn("暂无可比数据", complete_zero)
+
+    def test_report_supports_progress_title_and_same_period_comparison_label(self):
+        stats = Stats(
+            success_count=4,
+            failure_count=0,
+            total_count=4,
+            first_success_at="2026-07-13T01:00:00+08:00",
+            last_success_at="2026-07-15T02:00:00+08:00",
+            peak_hour=1,
+            peak_hour_count=2,
+            peak_day="2026-07-14",
+            peak_day_count=2,
+            last_failure="-",
+            active_day_count=3,
+        )
+        now = datetime(2026, 7, 15, 6, 10, tzinfo=TZ)
+
+        text = format_report(
+            "weekly",
+            manual_period("weekly", now),
+            stats,
+            now,
+            previous_success_count=None,
+            include_comparison=True,
+            title_override="本周进度（封面预览）",
+            comparison_label_override="较上周同期",
+            generated_at_label=True,
+            include_diagnostics=False,
+            include_moderation=False,
+        )
+
+        self.assertTrue(text.startswith("📊本周进度（封面预览）\n"))
+        self.assertIn("数据截至：07-15 06:10", text)
+        self.assertIn("较上周同期：暂无可比数据", text)
+
+    def test_report_rejects_invalid_period_or_negative_counts(self):
+        invalid_period = manual_period("daily", datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
+        stats = Stats(
+            success_count=-1,
+            failure_count=0,
+            total_count=0,
+            first_success_at="-",
+            last_success_at="-",
+            peak_hour=None,
+            peak_hour_count=0,
+            peak_day="",
+            peak_day_count=0,
+            last_failure="-",
+            active_day_count=0,
+        )
+
+        with self.assertRaises(ValueError):
+            format_report("daily", invalid_period, stats, invalid_period.end)
+
+        valid_period = scheduled_period("daily", datetime(2026, 7, 11, 0, 0, tzinfo=TZ))
+        inconsistent = Stats(
+            success_count=1,
+            failure_count=1,
+            total_count=1,
+            first_success_at="2026-07-10T01:00:00+08:00",
+            last_success_at="2026-07-10T01:00:00+08:00",
+            peak_hour=1,
+            peak_hour_count=1,
+            peak_day="2026-07-10",
+            peak_day_count=1,
+            last_failure="bad request",
+            active_day_count=1,
+        )
+        with self.assertRaises(ValueError):
+            format_report("daily", valid_period, inconsistent, valid_period.end)
 
     def test_previous_period_handles_daily_weekly_and_variable_month_lengths(self):
         cases = (
