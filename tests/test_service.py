@@ -1050,6 +1050,23 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIsNone(self.store.get_state("scheduled_report_cover_file_id"))
         self.assertEqual(self.api.sent, [])
 
+    def test_non_cover_media_caption_does_not_run_owner_command(self):
+        self.make_service()
+
+        self.service.handle_update({
+            "update_id": 206,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "caption": "/report",
+                "photo": [{"file_id": "ordinary-photo", "width": 1280, "height": 720}],
+            },
+        })
+
+        self.assertEqual(self.api.sent, [])
+        self.assertIsNone(self.store.get_state("scheduled_report_cover_file_id"))
+
     def test_cover_command_is_hidden_from_runtime_help(self):
         self.make_service()
 

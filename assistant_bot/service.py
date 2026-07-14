@@ -548,7 +548,14 @@ class AssistantService:
             if text in OWNER_REPLY_DELETE_COMMANDS:
                 self._handle_owner_reply_action(message, text)
                 return
-            command_text = str(message.get("text") or message.get("caption") or "").strip()
+            command_text = text
+            if not command_text:
+                caption = str(message.get("caption") or "").strip()
+                caption_command = ""
+                if caption.startswith("/"):
+                    caption_command = caption.split()[0].split("@")[0].lower()
+                if caption_command == "/cover":
+                    command_text = caption
             if command_text.startswith("/"):
                 command = command_text.split()[0].split("@")[0].lower()
                 if command == "/cover":
