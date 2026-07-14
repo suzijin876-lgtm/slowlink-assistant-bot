@@ -24,6 +24,12 @@ COMPARISON_LABELS = {
     "monthly": "较前月",
 }
 
+COMPACT_REPORT_TITLES = {
+    "daily": "昨日",
+    "weekly": "上周",
+    "monthly": "上月",
+}
+
 
 def format_display_time(value: str | datetime, reference: datetime) -> str:
     if value == "-":
@@ -119,7 +125,7 @@ def _format_average(count: int, days: int) -> str:
     return f"{count / days:.1f}".rstrip("0").rstrip(".")
 
 
-def format_data_range(period: Period, data_start: datetime) -> str:
+def format_data_range(period: Period, data_start: datetime, compact: bool = False) -> str:
     actual_start = max(period.start, data_start)
     if actual_start >= period.end:
         return "数据范围：该周期无历史数据"
@@ -127,10 +133,12 @@ def format_data_range(period: Period, data_start: datetime) -> str:
     end_is_boundary = not any((display_end.hour, display_end.minute, display_end.second, display_end.microsecond))
     if end_is_boundary:
         display_end -= timedelta(microseconds=1)
-    start_format = "%Y-%m-%d" if not any(
+    date_format = "%m-%d" if compact else "%Y-%m-%d"
+    date_time_format = "%m-%d %H:%M" if compact else "%Y-%m-%d %H:%M"
+    start_format = date_format if not any(
         (actual_start.hour, actual_start.minute, actual_start.second, actual_start.microsecond)
-    ) else "%Y-%m-%d %H:%M"
-    end_format = "%Y-%m-%d" if end_is_boundary else "%Y-%m-%d %H:%M"
+    ) else date_time_format
+    end_format = date_format if end_is_boundary else date_time_format
     return f"数据范围：{actual_start:{start_format}}至{display_end:{end_format}}"
 
 
@@ -217,6 +225,52 @@ def format_count_change(label: str, current_count: int, previous_count: int | No
     else:
         value = "持平"
     return f"{label}：{value}"
+
+
+def format_compact_report(
+    kind: str,
+    period: Period,
+    stats: Stats,
+    previous_success_count: int | None,
+    data_start: datetime | None = None,
+) -> str:
+    if period.kind == "daily":
+        period_label = period.start.strftime("%m-%d")
+    else:
+        display_end = period.end
+        if not any((display_end.hour, display_end.minute, display_end.second, display_end.microsecond)):
+            display_end -= timedelta(days=1)
+        period_label = f"{period.start:%m-%d}至{display_end:%m-%d}"
+
+    change = format_count_change(
+        COMPARISON_LABELS.get(kind, "较前期"),
+        stats.success_count,
+        previous_success_count,
+    )
+    lines = [
+        f"{COMPACT_REPORT_TITLES.get(kind, report_name(kind))}（{period_label}）",
+        f"转发：{stats.success_count}条｜{change}",
+    ]
+
+    if data_start is not None and data_start > period.start:
+        lines.append(format_data_range(period, data_start, compact=True))
+        return "\n".join(lines)
+
+    if kind == "daily" and stats.peak_hour is not None:
+        lines.append(f"高峰：{_format_peak_hour(stats.peak_hour)}")
+    elif kind == "weekly":
+        activity = f"日均：{_format_average(stats.success_count, _covered_days(period))}条"
+        if stats.peak_day:
+            activity += f"｜最活跃：{stats.peak_day[5:]}"
+        else:
+            activity += f"｜活跃：{stats.active_day_count}天"
+        lines.append(activity)
+    elif kind == "monthly":
+        lines.append(
+            f"日均：{_format_average(stats.success_count, _covered_days(period))}条"
+            f"｜活跃：{stats.active_day_count}天"
+        )
+    return "\n".join(lines)
 
 
 def format_report(

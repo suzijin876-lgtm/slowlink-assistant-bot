@@ -11,6 +11,7 @@ from . import __version__
 from .config import BotConfig, chat_ref_for_api, chat_username_ref, normalize_chat_ref
 from .reports import (
     Period,
+    format_compact_report,
     format_count_change,
     format_data_range,
     format_display_time,
@@ -995,13 +996,24 @@ class AssistantService:
 
         combined = len(pending) > 1
         titles = "、".join(item["title"] for item in pending)
-        message_text = "\n\n────────\n\n".join(item["text"] for item in pending)
         first = pending[0]
         if combined:
+            compact_sections = [
+                format_compact_report(
+                    item["kind"],
+                    item["period"],
+                    item["stats"],
+                    item["previous_success_count"],
+                    data_start=item["data_start"],
+                )
+                for item in pending
+            ]
+            message_text = "📊周期简报\n\n" + "\n\n".join(compact_sections)
             log_name = "组合报表"
             log_context = f"包含={titles}"
             notice_context = f"包含：{titles}"
         else:
+            message_text = first["text"]
             period = first["period"]
             period_field = report_period_field(first["kind"])
             period_label = format_period_label(period)

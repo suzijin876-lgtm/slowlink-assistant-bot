@@ -1286,10 +1286,21 @@ class AssistantServiceTests(unittest.TestCase):
 
         self.assertEqual(len(self.api.sent), 1)
         self.assertEqual(self.api.sent[0][0], -1009)
-        self.assertIn("📊昨日日报", self.api.sent[0][1])
-        self.assertIn("📊上周周报", self.api.sent[0][1])
-        self.assertNotIn("📊上月月报", self.api.sent[0][1])
-        self.assertIn("────────", self.api.sent[0][1])
+        self.assertEqual(
+            self.api.sent[0][1],
+            "\n".join(
+                [
+                    "📊周期简报",
+                    "",
+                    "昨日（07-12）",
+                    "转发：0条｜较前日：持平",
+                    "",
+                    "上周（07-06至07-12）",
+                    "转发：0条｜较前周：暂无可比数据",
+                    "数据范围：07-10 09:30至07-12",
+                ]
+            ),
+        )
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])
         daily = scheduled_period("daily", now)
         weekly = scheduled_period("weekly", now)
@@ -1305,9 +1316,12 @@ class AssistantServiceTests(unittest.TestCase):
         self.service.run_due_reports(now)
 
         self.assertEqual(len(self.api.sent), 1)
-        self.assertIn("📊昨日日报", self.api.sent[0][1])
-        self.assertNotIn("📊上周周报", self.api.sent[0][1])
-        self.assertIn("📊上月月报", self.api.sent[0][1])
+        self.assertIn("📊周期简报", self.api.sent[0][1])
+        self.assertIn("昨日（07-31）", self.api.sent[0][1])
+        self.assertNotIn("上周（", self.api.sent[0][1])
+        self.assertIn("上月（07-01至07-31）", self.api.sent[0][1])
+        self.assertIn("数据范围：07-10 09:30至07-31", self.api.sent[0][1])
+        self.assertNotIn("────────", self.api.sent[0][1])
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])
         daily = scheduled_period("daily", now)
         monthly = scheduled_period("monthly", now)
@@ -1317,14 +1331,43 @@ class AssistantServiceTests(unittest.TestCase):
     def test_daily_weekly_and_monthly_reports_are_combined_into_one_message(self):
         self.make_service()
         now = datetime(2026, 6, 1, 0, 0, tzinfo=TZ)
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 4, 1, 0, 0, tzinfo=TZ).isoformat())
+        self.store.record_copy_success(
+            "-1001", "Source", 1, "42", 101, datetime(2026, 5, 30, 9, 0, tzinfo=TZ)
+        )
+        self.store.record_copy_success(
+            "-1001", "Source", 2, "42", 102, datetime(2026, 5, 31, 10, 0, tzinfo=TZ)
+        )
+        self.store.record_copy_success(
+            "-1001", "Source", 3, "42", 103, datetime(2026, 5, 31, 10, 30, tzinfo=TZ)
+        )
 
         self.service.run_due_reports(now)
 
         self.assertEqual(len(self.api.sent), 1)
-        self.assertEqual(self.api.sent[0][1].count("📊"), 3)
-        self.assertIn("📊昨日日报", self.api.sent[0][1])
-        self.assertIn("📊上周周报", self.api.sent[0][1])
-        self.assertIn("📊上月月报", self.api.sent[0][1])
+        self.assertEqual(
+            self.api.sent[0][1],
+            "\n".join(
+                [
+                    "📊周期简报",
+                    "",
+                    "昨日（05-31）",
+                    "转发：2条｜较前日：增加1条",
+                    "高峰：10:00-11:00",
+                    "",
+                    "上周（05-25至05-31）",
+                    "转发：3条｜较前周：增加3条",
+                    "日均：0.4条｜最活跃：05-31",
+                    "",
+                    "上月（05-01至05-31）",
+                    "转发：3条｜较前月：增加3条",
+                    "日均：0.1条｜活跃：2天",
+                ]
+            ),
+        )
+        self.assertNotIn("────────", self.api.sent[0][1])
+        self.assertNotIn("首次转发", self.api.sent[0][1])
+        self.assertNotIn("最后转发", self.api.sent[0][1])
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])
         for kind in ("daily", "weekly", "monthly"):
             period = scheduled_period(kind, now)
@@ -1339,10 +1382,11 @@ class AssistantServiceTests(unittest.TestCase):
 
         self.assertEqual(len(self.api.photos), 1)
         self.assertEqual(self.api.photos[0][1], "cover-file-id")
-        self.assertEqual(self.api.photos[0][2].count("📊"), 3)
-        self.assertIn("📊昨日日报", self.api.photos[0][2])
-        self.assertIn("📊上周周报", self.api.photos[0][2])
-        self.assertIn("📊上月月报", self.api.photos[0][2])
+        self.assertEqual(self.api.photos[0][2].count("📊"), 1)
+        self.assertIn("📊周期简报", self.api.photos[0][2])
+        self.assertIn("昨日（", self.api.photos[0][2])
+        self.assertIn("上周（", self.api.photos[0][2])
+        self.assertIn("上月（", self.api.photos[0][2])
         self.assertLessEqual(len(self.api.photos[0][2]), 1024)
         self.assertEqual(self.api.sent, [])
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])
