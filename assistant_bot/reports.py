@@ -184,6 +184,7 @@ def format_report(
     stats: Stats,
     generated_at: datetime,
     moderation_stats: ModerationStats | None = None,
+    include_diagnostics: bool = True,
 ) -> str:
     title = REPORT_TITLES.get(kind, report_name(kind))
     period_field = report_period_field(kind)
@@ -196,7 +197,8 @@ def format_report(
             "转发：0条",
         ]
         lines.extend(_moderation_lines(moderation_stats))
-        lines.extend(["运行状态：待命中", "异常记录：0次"])
+        if include_diagnostics:
+            lines.extend(["运行状态：待命中", "异常记录：0次"])
         return "\n".join(lines)
 
     lines = [
@@ -214,10 +216,11 @@ def format_report(
     if stats.success_count:
         lines.append(f"最后转发：{_format_report_time(stats.last_success_at, period, generated_at)}")
     lines.extend(_moderation_lines(moderation_stats))
-    lines.extend(
-        [
-            f"运行状态：{status}",
-            f"异常记录：{stats.failure_count}次",
-        ]
-    )
+    if include_diagnostics:
+        lines.extend(
+            [
+                f"运行状态：{status}",
+                f"异常记录：{stats.failure_count}次",
+            ]
+        )
     return "\n".join(lines)

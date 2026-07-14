@@ -152,6 +152,21 @@ class AssistantServiceTests(unittest.TestCase):
             },
         })
 
+    def send_owner_reply(self, text, copied_message_id=900, user_id=42, update_id=1000):
+        self.service.handle_update({
+            "update_id": update_id,
+            "message": {
+                "message_id": update_id,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": user_id},
+                "text": text,
+                "reply_to_message": {
+                    "message_id": copied_message_id,
+                    "chat": {"id": 42, "type": "private"},
+                },
+            },
+        })
+
     def send_reaction_count(self, message_id, thumbs_down=0, poop_count=0, thumbs_up=0, update_id=900):
         reactions = []
         if thumbs_up:
@@ -191,6 +206,220 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertEqual(self.api.copied, [(42, -1001, 55)])
         stats = self.store.stats_between(datetime(2026, 7, 10, 0, 0, tzinfo=TZ), datetime(2026, 7, 11, 0, 0, tzinfo=TZ))
         self.assertEqual(stats.success_count, 1)
+
+    def test_owner_reply_shan_deletes_source_and_keeps_private_copy(self):
+        self.make_service()
+        self.send_source_post()
+
+        self.send_owner_reply("删")
+
+        post = self.store.get_moderation_post("-1001", 55)
+        event = self.store._conn.execute(
+            "SELECT event_type, reason FROM moderation_events WHERE source_message_id = 55"
+        ).fetchone()
+        self.assertEqual(self.api.deleted, [(-1001, 55)])
+        self.assertNotIn((42, 900), self.api.deleted)
+        self.assertEqual(post["status"], "deleted")
+        self.assertEqual(dict(event), {"event_type": "deleted", "reason": "owner"})
+        self.assertIn("帖子已立即删除", self.api.sent[-1][1])
+
+    def test_owner_reply_shanchu_also_deletes_source(self):
+        self.make_service()
+        self.send_source_post()
+
+        self.send_owner_reply("删除")
+
+        self.assertEqual(self.api.deleted, [(-1001, 55)])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "deleted")
+
+    def test_owner_reply_already_deleted_only_records_manual_deletion(self):
+        self.make_service()
+        self.send_source_post()
+
+        self.send_owner_reply("已删除")
+        self.service.clock = lambda: datetime(2026, 7, 10, 12, 1, tzinfo=TZ)
+
+        post = self.store.get_moderation_post("-1001", 55)
+        event = self.store._conn.execute(
+            "SELECT event_type, reason FROM moderation_events WHERE source_message_id = 55"
+        ).fetchone()
+        copy_stats = self.store.stats_between(
+            datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
+            datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+        )
+        moderation_stats = self.store.moderation_stats_between(
+            datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
+            datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+        )
+        report = self.service.current_report_text()
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(post["status"], "deleted")
+        self.assertEqual(dict(event), {"event_type": "deleted", "reason": "manual"})
+        self.assertEqual(copy_stats.success_count, 1)
+        self.assertEqual(moderation_stats.deleted_count, 1)
+        self.assertIn("内容纠错：删除1条", report)
+        self.assertNotIn("已删除：", report)
+        self.assertIn("已记录为删除", self.api.sent[-1][1])
+
+    def test_owner_reply_delete_bypasses_one_hour_limit(self):
+        self.make_service()
+        self.send_source_post(at=datetime(2026, 7, 10, 10, 0, tzinfo=TZ))
+
+        self.send_owner_reply("删除")
+
+        self.assertEqual(self.api.deleted, [(-1001, 55)])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "deleted")
+
+    def test_owner_reply_delete_bypasses_batch_protection(self):
+        self.make_service()
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=TZ)
+        for message_id in range(1, 5):
+            at = now - timedelta(minutes=message_id)
+            self.store.record_moderation_post("-1001", "Source", message_id, at)
+            self.store.complete_moderation("-1001", message_id, "deleted", "deleted", "auto", at)
+        self.send_source_post()
+
+        self.send_owner_reply("删")
+
+        self.assertEqual(self.api.deleted, [(-1001, 55)])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "deleted")
+
+    def test_owner_reply_action_requires_owner_and_known_copied_message(self):
+        self.make_service()
+        self.send_source_post()
+
+        self.send_owner_reply("删除", user_id=99)
+        self.send_owner_reply("删除", copied_message_id=901, update_id=1001)
+
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "watching")
+
+    def test_owner_reply_action_requires_exact_text_and_a_reply(self):
+        self.make_service()
+        self.send_source_post()
+
+        self.send_owner_reply("帮我删除")
+        self.service.handle_update({
+            "update_id": 1001,
+            "message": {
+                "message_id": 1001,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "text": "删除",
+            },
+        })
+
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "watching")
+
+    def test_owner_reply_manual_deletion_is_idempotent(self):
+        self.make_service()
+        self.send_source_post()
+
+        self.send_owner_reply("已删除")
+        self.send_owner_reply("已删除", update_id=1001)
+
+        event_count = self.store._conn.execute(
+            "SELECT COUNT(*) FROM moderation_events WHERE source_message_id = 55 AND event_type = 'deleted'"
+        ).fetchone()[0]
+        self.assertEqual(event_count, 1)
+        self.assertEqual(self.api.deleted, [])
+        self.assertIn("已经处理", self.api.sent[-1][1])
+
+    def test_owner_reply_can_retry_after_delete_failure(self):
+        self.make_service()
+        self.send_source_post()
+        self.api.fail_delete = True
+        self.send_owner_reply("删除")
+
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "failed")
+        self.api.fail_delete = False
+        self.send_owner_reply("删", update_id=1001)
+
+        self.assertEqual(self.api.deleted, [(-1001, 55)])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "deleted")
+
+    def test_owner_reply_can_confirm_manual_deletion_after_delete_failure(self):
+        self.make_service()
+        self.send_source_post()
+        self.api.fail_delete = True
+        self.send_owner_reply("删除")
+        self.send_owner_reply("已删除", update_id=1001)
+
+        stats = self.store.moderation_stats_between(
+            datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
+            datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+        )
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "deleted")
+        self.assertEqual(stats.deleted_count, 1)
+
+    def test_owner_reply_treats_missing_source_as_confirmed_deletion(self):
+        self.make_service()
+        self.send_source_post()
+
+        def missing_source(*args):
+            raise RuntimeError("deleteMessage failed: Bad Request: message to delete not found")
+
+        self.api.delete_message = missing_source
+        self.send_owner_reply("删除")
+
+        stats = self.store.moderation_stats_between(
+            datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
+            datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+        )
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "deleted")
+        self.assertEqual(stats.deleted_count, 1)
+        self.assertIn("已确认删除", self.api.sent[-1][1])
+
+    def test_owner_manual_deletion_clears_pending_notice_buttons(self):
+        self.make_service()
+        self.send_source_post()
+        self.send_reaction_count(55, thumbs_down=2)
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "pending")
+
+        self.send_owner_reply("已删除", update_id=1001)
+
+        post = self.store.get_moderation_post("-1001", 55)
+        self.assertEqual(post["status"], "deleted")
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(self.api.edited[-1][1], 101)
+        self.assertEqual(self.api.edited[-1][3], {"inline_keyboard": []})
+        self.assertIn("已记录为删除", self.api.edited[-1][2])
+
+    def test_owner_manual_deletion_clears_protected_notice_buttons(self):
+        self.make_service()
+        self.send_source_post()
+        now = datetime(2026, 7, 10, 12, 0, tzinfo=TZ)
+        self.store.complete_moderation("-1001", 55, "protected", "protected", "rate_limit", now)
+        self.store.set_moderation_notice("-1001", 55, 777, now)
+
+        self.send_owner_reply("已删除")
+
+        self.assertEqual(self.store.get_moderation_post("-1001", 55)["status"], "deleted")
+        self.assertEqual(self.api.edited[-1][1], 777)
+        self.assertEqual(self.api.edited[-1][3], {"inline_keyboard": []})
+
+    def test_group_current_report_hides_runtime_diagnostics_but_private_keeps_them(self):
+        self.make_service()
+        self.store.record_copy_success(
+            "-1001", "Source", 55, "42", 900, datetime(2026, 7, 10, 12, 0, tzinfo=TZ)
+        )
+        self.store.record_copy_failure(
+            "-1001", "Source", 56, "42", "bad request", datetime(2026, 7, 10, 12, 1, tzinfo=TZ)
+        )
+        self.service.clock = lambda: datetime(2026, 7, 10, 12, 2, tzinfo=TZ)
+
+        self.service.send_current_report(-1009)
+        group_text = self.api.sent[-1][1]
+        self.service.send_current_report()
+        private_text = self.api.sent[-1][1]
+
+        self.assertNotIn("系统：", group_text)
+        self.assertNotIn("异常：", group_text)
+        self.assertIn("系统：", private_text)
+        self.assertIn("异常：1次", private_text)
 
     def test_private_channel_post_link_in_caption_is_copied(self):
         self.make_service()
@@ -804,7 +1033,8 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("日期：2026-07-09", self.api.sent[0][1])
         self.assertIn("转发：1条", self.api.sent[0][1])
         self.assertIn("内容纠错：删除1条", self.api.sent[0][1])
-        self.assertIn("运行状态：正常", self.api.sent[0][1])
+        self.assertNotIn("运行状态：", self.api.sent[0][1])
+        self.assertNotIn("异常记录：", self.api.sent[0][1])
         self.assertNotIn("约", self.api.sent[0][1])
         self.assertNotIn("仅统计Bot转发，不代表内容正确。", self.api.sent[0][1])
         self.assertEqual(self.api.pinned, [(-1009, 101, True)])

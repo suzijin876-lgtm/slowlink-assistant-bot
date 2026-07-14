@@ -6,7 +6,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from assistant_bot.reports import format_report, manual_period, scheduled_period, should_run_report
-from assistant_bot.store import EventStore, ModerationStats
+from assistant_bot.store import EventStore, ModerationStats, Stats
 
 
 TZ = ZoneInfo("Asia/Shanghai")
@@ -80,6 +80,31 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertEqual(stats.success_count, 1)
         self.assertEqual(stats.failure_count, 1)
         self.assertEqual(stats.total_count, 2)
+
+    def test_store_finds_successful_copy_by_target_message(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "assistant.sqlite3")
+            try:
+                store.record_copy_success(
+                    "-1001",
+                    "source",
+                    55,
+                    "42",
+                    900,
+                    datetime(2026, 7, 10, 1, 0, tzinfo=TZ),
+                )
+
+                event = store.get_copy_event_by_target_message("42", 900)
+                wrong_owner = store.get_copy_event_by_target_message("99", 900)
+                unknown_message = store.get_copy_event_by_target_message("42", 901)
+            finally:
+                store.close()
+
+        self.assertEqual(event["source_chat_id"], "-1001")
+        self.assertEqual(event["source_message_id"], 55)
+        self.assertEqual(event["copied_message_id"], 900)
+        self.assertIsNone(wrong_owner)
+        self.assertIsNone(unknown_message)
 
     def test_store_collects_first_last_and_peak_activity(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -319,6 +344,41 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertIn("内容纠错：删除2条", text)
         self.assertIn("纠错保留：1条", text)
         self.assertIn("批量保护：1次", text)
+
+    def test_report_can_hide_runtime_diagnostics_for_report_group(self):
+        stats = Stats(
+            success_count=1,
+            failure_count=2,
+            total_count=3,
+            first_success_at="2026-07-10T01:00:00+08:00",
+            last_success_at="2026-07-10T02:00:00+08:00",
+            peak_hour=1,
+            peak_hour_count=1,
+            peak_day="2026-07-10",
+            peak_day_count=1,
+            last_failure="bad request",
+        )
+        period = scheduled_period("daily", datetime(2026, 7, 11, 0, 0, tzinfo=TZ))
+
+        group_text = format_report(
+            "daily",
+            period,
+            stats,
+            datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+            include_diagnostics=False,
+        )
+        private_text = format_report(
+            "daily",
+            period,
+            stats,
+            datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+            include_diagnostics=True,
+        )
+
+        self.assertNotIn("运行状态：", group_text)
+        self.assertNotIn("异常记录：", group_text)
+        self.assertIn("运行状态：", private_text)
+        self.assertIn("异常记录：2次", private_text)
 
     def test_weekly_report_shows_exact_average_and_peak_day(self):
         with tempfile.TemporaryDirectory() as tmp:

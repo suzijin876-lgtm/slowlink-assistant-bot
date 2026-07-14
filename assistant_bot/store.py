@@ -118,6 +118,10 @@ class EventStore:
                 "CREATE INDEX IF NOT EXISTS idx_copy_events_ok_created_at_ts ON copy_events(ok, created_at_ts)"
             )
             self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_copy_events_target_message "
+                "ON copy_events(target_chat_id, copied_message_id, ok)"
+            )
+            self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_moderation_posts_due ON moderation_posts(status, delete_after_ts)"
             )
             self._conn.execute(
@@ -184,6 +188,19 @@ class EventStore:
         at: datetime,
     ) -> None:
         self._insert_event(source_chat_id, source_title, source_message_id, target_chat_id, None, False, error[:500], at)
+
+    def get_copy_event_by_target_message(self, target_chat_id: str, copied_message_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT * FROM copy_events
+                WHERE target_chat_id = ? AND copied_message_id = ? AND ok = 1
+                ORDER BY created_at_ts DESC, id DESC
+                LIMIT 1
+                """,
+                (str(target_chat_id), int(copied_message_id)),
+            ).fetchone()
+        return dict(row) if row else None
 
     def stats_between(self, start: datetime, end: datetime) -> Stats:
         with self._lock:
@@ -418,6 +435,7 @@ class EventStore:
         event_type: str,
         reason: str,
         at: datetime,
+        allow_terminal_delete: bool = False,
     ) -> bool:
         with self._lock, self._conn:
             row = self._conn.execute(
@@ -427,7 +445,10 @@ class EventStore:
                 """,
                 (str(source_chat_id), int(source_message_id)),
             ).fetchone()
-            if not row or str(row["status"]) in {"deleted", "kept", "failed"}:
+            current_status = str(row["status"]) if row else ""
+            if not row or current_status == "deleted":
+                return False
+            if current_status in {"kept", "failed"} and not (allow_terminal_delete and status == "deleted"):
                 return False
             if str(row["status"]) == str(status):
                 return False

@@ -34,6 +34,7 @@ MODERATION_DELETE_DELAY = timedelta(minutes=1)
 MODERATION_POST_MAX_AGE = timedelta(hours=1)
 MODERATION_AUTO_DELETE_LIMIT = 4
 MODERATION_AUTO_DELETE_WINDOW = timedelta(minutes=10)
+OWNER_REPLY_DELETE_COMMANDS = {"删", "删除", "已删除"}
 TELEGRAM_POST_LINK_RE = re.compile(
     r"https://(?:"
     r"(?:t\.me|telegram\.me)/(?!c/)[A-Za-z0-9_]+/[1-9]\d*(?:/[1-9]\d*)?"
@@ -335,23 +336,28 @@ class AssistantService:
                 pass
         self._send_owner_notice(text)
 
-    def _delete_moderation_post(self, post: dict, reason: str, now: datetime) -> bool:
+    def _complete_deleted_moderation(
+        self,
+        post: dict,
+        reason: str,
+        now: datetime,
+        action: str | None = None,
+    ) -> bool:
         source_chat_id = str(post.get("source_chat_id") or "")
         message_id = int(post.get("source_message_id") or 0)
-        try:
-            self.api.delete_message(chat_ref_for_api(source_chat_id), message_id)
-        except Exception as exc:
-            self.store.complete_moderation(source_chat_id, message_id, "failed", "failed", reason, now)
-            self._update_moderation_notice(
-                post,
-                "❌帖子删除失败\n"
-                f"消息：#{message_id}\n"
-                f"原因：{exc}",
-            )
-            LOG.warning("帖子删除失败：消息=%s 原因=%s", message_id, exc)
+        completed = self.store.complete_moderation(
+            source_chat_id,
+            message_id,
+            "deleted",
+            "deleted",
+            reason,
+            now,
+            allow_terminal_delete=reason == "owner",
+        )
+        if not completed:
+            LOG.warning("帖子删除状态未更新：消息=%s", message_id)
             return False
-        self.store.complete_moderation(source_chat_id, message_id, "deleted", "deleted", reason, now)
-        action = "自动删除" if reason == "auto" else "立即删除" if reason == "owner" else "直接删除"
+        action = action or ("自动删除" if reason == "auto" else "立即删除" if reason == "owner" else "直接删除")
         notice_message_id = int(post.get("owner_notice_message_id") or 0)
         if reason != "poop" or notice_message_id:
             self._update_moderation_notice(
@@ -369,6 +375,25 @@ class AssistantService:
             int(post.get("poop_count") or 0),
         )
         return True
+
+    def _delete_moderation_post(self, post: dict, reason: str, now: datetime) -> bool:
+        source_chat_id = str(post.get("source_chat_id") or "")
+        message_id = int(post.get("source_message_id") or 0)
+        try:
+            self.api.delete_message(chat_ref_for_api(source_chat_id), message_id)
+        except Exception as exc:
+            if self._is_missing_source_error(exc):
+                return self._complete_deleted_moderation(post, reason, now, action="确认删除")
+            self.store.complete_moderation(source_chat_id, message_id, "failed", "failed", reason, now)
+            self._update_moderation_notice(
+                post,
+                "❌帖子删除失败\n"
+                f"消息：#{message_id}\n"
+                f"原因：{exc}",
+            )
+            LOG.warning("帖子删除失败：消息=%s 原因=%s", message_id, exc)
+            return False
+        return self._complete_deleted_moderation(post, reason, now)
 
     def _automatic_delete_or_protect(self, post: dict, reason: str, now: datetime) -> bool:
         source_chat_id = str(post.get("source_chat_id") or "")
@@ -421,6 +446,52 @@ class AssistantService:
         except Exception:
             pass
 
+    @staticmethod
+    def _is_missing_source_error(error: Exception) -> bool:
+        detail = str(error).lower()
+        return "message to delete not found" in detail or "message not found" in detail
+
+    def _handle_owner_reply_action(self, message: dict[str, Any], text: str) -> None:
+        reply = message.get("reply_to_message") or {}
+        copied_message_id = int(reply.get("message_id") or 0)
+        if not copied_message_id:
+            self._send_owner_notice("请回复要处理的转发消息")
+            return
+
+        event = self.store.get_copy_event_by_target_message(str(self.config.owner_user_id), copied_message_id)
+        if not event:
+            self._send_owner_notice("未找到对应的转发记录")
+            return
+
+        source_chat_id = str(event.get("source_chat_id") or "")
+        source_message_id = int(event.get("source_message_id") or 0)
+        post = self.store.get_moderation_post(source_chat_id, source_message_id)
+        if not post:
+            self._send_owner_notice("未找到对应的纠错记录")
+            return
+        if str(post.get("status") or "") == "deleted":
+            self._send_owner_notice("这条消息已经处理")
+            return
+
+        now = self._now()
+        if text == "已删除":
+            if self.store.complete_moderation(
+                source_chat_id,
+                source_message_id,
+                "deleted",
+                "deleted",
+                "manual",
+                now,
+                allow_terminal_delete=True,
+            ):
+                self._update_moderation_notice(post, f"✅已记录为删除\n消息：#{source_message_id}")
+                LOG.info("手动删除已记录：消息=%s 原因=主人已在频道删除", source_message_id)
+            else:
+                self._send_owner_notice("这条消息已经处理")
+            return
+
+        self._delete_moderation_post(post, "owner", now)
+
     def _handle_copy_failure(self, source_title: str, message_id: int, error: str) -> None:
         self.consecutive_copy_failures += 1
         if self.consecutive_copy_failures < COPY_FAILURE_ALERT_THRESHOLD or self.copy_failure_alert_active:
@@ -469,6 +540,9 @@ class AssistantService:
 
         if chat_type == "private":
             if user_id != self.config.owner_user_id:
+                return
+            if text in OWNER_REPLY_DELETE_COMMANDS:
+                self._handle_owner_reply_action(message, text)
                 return
             if text.startswith("/"):
                 self._handle_owner_command(text)
@@ -667,7 +741,7 @@ class AssistantService:
             disable_web_page_preview=True,
         )
 
-    def current_report_text(self) -> str:
+    def current_report_text(self, include_diagnostics: bool = True) -> str:
         now = self._now()
         today = manual_period("daily", now)
         stats = self.store.stats_between(today.start, today.end)
@@ -675,28 +749,37 @@ class AssistantService:
         recent = format_display_time(stats.last_success_at, now)
         status = "正常" if stats.failure_count == 0 else "有失败"
         if stats.total_count == 0:
-            return "\n".join(
-                [
-                    "📌当前概览",
-                    "今日暂无明显转发",
-                    f"内容纠错：删除{moderation_stats.deleted_count}条",
-                    "系统：待命中",
-                    "异常：0次",
-                ]
-            )
+            lines = [
+                "📌当前概览",
+                "今日暂无明显转发",
+                f"内容纠错：删除{moderation_stats.deleted_count}条",
+            ]
+            if include_diagnostics:
+                lines.extend(["系统：待命中", "异常：0次"])
+            return "\n".join(lines)
         lines = [
             "📌当前概览",
             f"今日转发{stats.success_count}条",
             f"内容纠错：删除{moderation_stats.deleted_count}条",
             f"最近：{recent}",
-            f"系统：{status if status == '正常' else '有异常'}",
-            f"异常：{stats.failure_count}次",
         ]
+        if include_diagnostics:
+            lines.extend(
+                [
+                    f"系统：{status if status == '正常' else '有异常'}",
+                    f"异常：{stats.failure_count}次",
+                ]
+            )
         return "\n".join(lines)
 
     def send_current_report(self, chat_id=None) -> None:
         target_chat = self.config.owner_user_id if chat_id is None else chat_id
-        self.api.send_message(target_chat, self.current_report_text(), disable_web_page_preview=True)
+        include_diagnostics = str(target_chat) == str(self.config.owner_user_id)
+        self.api.send_message(
+            target_chat,
+            self.current_report_text(include_diagnostics=include_diagnostics),
+            disable_web_page_preview=True,
+        )
 
     def run_due_reports(self, now: datetime | None = None) -> None:
         now = (now or self._now()).astimezone(self.tz)
@@ -717,7 +800,14 @@ class AssistantService:
                     "period": period,
                     "stats": stats,
                     "moderation_stats": moderation_stats,
-                    "text": format_report(kind, period, stats, now, moderation_stats=moderation_stats),
+                    "text": format_report(
+                        kind,
+                        period,
+                        stats,
+                        now,
+                        moderation_stats=moderation_stats,
+                        include_diagnostics=False,
+                    ),
                     "title": report_name(kind),
                 }
             )
