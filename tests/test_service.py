@@ -404,7 +404,17 @@ class AssistantServiceTests(unittest.TestCase):
     def test_group_current_report_hides_runtime_diagnostics_but_private_keeps_them(self):
         self.make_service()
         self.store.record_copy_success(
+            "-1001", "Source", 54, "42", 899, datetime(2026, 7, 9, 10, 0, tzinfo=TZ)
+        )
+        self.store.record_copy_success(
             "-1001", "Source", 55, "42", 900, datetime(2026, 7, 10, 12, 0, tzinfo=TZ)
+        )
+        self.store.record_copy_success(
+            "-1001", "Source", 57, "42", 901, datetime(2026, 7, 10, 12, 1, tzinfo=TZ)
+        )
+        self.store.record_moderation_post("-1001", "Source", 57, datetime(2026, 7, 10, 12, 1, tzinfo=TZ))
+        self.store.complete_moderation(
+            "-1001", 57, "deleted", "deleted", "owner_reply", datetime(2026, 7, 10, 12, 1, 30, tzinfo=TZ)
         )
         self.store.record_copy_failure(
             "-1001", "Source", 56, "42", "bad request", datetime(2026, 7, 10, 12, 1, tzinfo=TZ)
@@ -418,8 +428,17 @@ class AssistantServiceTests(unittest.TestCase):
 
         self.assertNotIn("系统：", group_text)
         self.assertNotIn("异常：", group_text)
+        self.assertNotIn("内容纠错", group_text)
+        self.assertIn("日期：2026-07-10", group_text)
+        self.assertIn("转发：1条", group_text)
+        self.assertIn("较昨日同期：持平", group_text)
+        self.assertIn("高峰时段：12:00-13:00", group_text)
+        self.assertIn("首次转发：12:00", group_text)
+        self.assertIn("最后转发：12:00", group_text)
         self.assertIn("系统：", private_text)
         self.assertIn("异常：1次", private_text)
+        self.assertIn("今日转发2条", private_text)
+        self.assertIn("内容纠错：删除1条", private_text)
 
     def test_private_channel_post_link_in_caption_is_copied(self):
         self.make_service()
@@ -903,7 +922,8 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertEqual(len(self.api.sent), 1)
         self.assertEqual(self.api.sent[0][0], -1009)
         self.assertIn("当前概览", self.api.sent[0][1])
-        self.assertIn("今日转发1条", self.api.sent[0][1])
+        self.assertIn("转发：1条", self.api.sent[0][1])
+        self.assertIn("较昨日同期：增加1条", self.api.sent[0][1])
 
     def test_report_group_id_command_confirms_configuration_without_exposing_id(self):
         self.make_service()
@@ -1020,6 +1040,7 @@ class AssistantServiceTests(unittest.TestCase):
 
     def test_scheduled_daily_report_goes_to_fixed_group_only(self):
         self.make_service()
+        self.store.record_copy_success("-1001", "Source", 0, "42", 8, datetime(2026, 7, 8, 1, 0, tzinfo=TZ))
         self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 9, 1, 0, tzinfo=TZ))
         self.store.record_moderation_post("-1001", "Source", 2, datetime(2026, 7, 9, 2, 0, tzinfo=TZ))
         self.store.update_moderation_reactions("-1001", 2, 0, 2, datetime(2026, 7, 9, 2, 0, tzinfo=TZ))
@@ -1032,7 +1053,12 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("📊昨日日报", self.api.sent[0][1])
         self.assertIn("日期：2026-07-09", self.api.sent[0][1])
         self.assertIn("转发：1条", self.api.sent[0][1])
-        self.assertIn("内容纠错：删除1条", self.api.sent[0][1])
+        self.assertIn("较前日：持平", self.api.sent[0][1])
+        self.assertIn("高峰时段：01:00-02:00", self.api.sent[0][1])
+        self.assertIn("高峰转发：1条", self.api.sent[0][1])
+        self.assertIn("首次转发：01:00", self.api.sent[0][1])
+        self.assertIn("最后转发：01:00", self.api.sent[0][1])
+        self.assertNotIn("内容纠错", self.api.sent[0][1])
         self.assertNotIn("运行状态：", self.api.sent[0][1])
         self.assertNotIn("异常记录：", self.api.sent[0][1])
         self.assertNotIn("约", self.api.sent[0][1])

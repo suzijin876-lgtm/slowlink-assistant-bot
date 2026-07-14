@@ -19,6 +19,7 @@ class Stats:
     peak_hour_count: int
     peak_day: str
     peak_day_count: int
+    active_day_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -203,31 +204,53 @@ class EventStore:
         return dict(row) if row else None
 
     def stats_between(self, start: datetime, end: datetime) -> Stats:
+        return self._stats_between(start, end, exclude_deleted=False)
+
+    def report_stats_between(self, start: datetime, end: datetime) -> Stats:
+        return self._stats_between(start, end, exclude_deleted=True)
+
+    def _stats_between(self, start: datetime, end: datetime, exclude_deleted: bool) -> Stats:
+        moderation_join = ""
+        visible_condition = ""
+        if exclude_deleted:
+            moderation_join = """
+                LEFT JOIN moderation_posts AS mp
+                    ON mp.source_chat_id = ce.source_chat_id
+                    AND mp.source_message_id = ce.source_message_id
+            """
+            visible_condition = "AND (ce.ok = 0 OR COALESCE(mp.status, '') != 'deleted')"
+
         with self._lock:
             rows = self._conn.execute(
-                """
+                f"""
                 SELECT
-                    SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS success_count,
-                    SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS failure_count,
+                    SUM(CASE WHEN ce.ok = 1 THEN 1 ELSE 0 END) AS success_count,
+                    SUM(CASE WHEN ce.ok = 0 THEN 1 ELSE 0 END) AS failure_count,
                     COUNT(*) AS total_count
-                FROM copy_events
-                WHERE created_at_ts >= ? AND created_at_ts < ?
+                FROM copy_events AS ce
+                {moderation_join}
+                WHERE ce.created_at_ts >= ? AND ce.created_at_ts < ?
+                {visible_condition}
                 """,
                 (start.timestamp(), end.timestamp()),
             ).fetchone()
             last_success = self._conn.execute(
-                """
-                SELECT created_at FROM copy_events
-                WHERE ok = 1 AND created_at_ts >= ? AND created_at_ts < ?
-                ORDER BY created_at_ts DESC LIMIT 1
+                f"""
+                SELECT ce.created_at FROM copy_events AS ce
+                {moderation_join}
+                WHERE ce.ok = 1 AND ce.created_at_ts >= ? AND ce.created_at_ts < ?
+                {visible_condition}
+                ORDER BY ce.created_at_ts DESC LIMIT 1
                 """,
                 (start.timestamp(), end.timestamp()),
             ).fetchone()
             first_success = self._conn.execute(
-                """
-                SELECT created_at FROM copy_events
-                WHERE ok = 1 AND created_at_ts >= ? AND created_at_ts < ?
-                ORDER BY created_at_ts ASC LIMIT 1
+                f"""
+                SELECT ce.created_at FROM copy_events AS ce
+                {moderation_join}
+                WHERE ce.ok = 1 AND ce.created_at_ts >= ? AND ce.created_at_ts < ?
+                {visible_condition}
+                ORDER BY ce.created_at_ts ASC LIMIT 1
                 """,
                 (start.timestamp(), end.timestamp()),
             ).fetchone()
@@ -240,10 +263,12 @@ class EventStore:
                 (start.timestamp(), end.timestamp()),
             ).fetchone()
             peak_hour = self._conn.execute(
-                """
-                SELECT CAST(substr(created_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS count
-                FROM copy_events
-                WHERE ok = 1 AND created_at_ts >= ? AND created_at_ts < ?
+                f"""
+                SELECT CAST(substr(ce.created_at, 12, 2) AS INTEGER) AS hour, COUNT(*) AS count
+                FROM copy_events AS ce
+                {moderation_join}
+                WHERE ce.ok = 1 AND ce.created_at_ts >= ? AND ce.created_at_ts < ?
+                {visible_condition}
                 GROUP BY hour
                 ORDER BY count DESC, hour ASC
                 LIMIT 1
@@ -251,13 +276,25 @@ class EventStore:
                 (start.timestamp(), end.timestamp()),
             ).fetchone()
             peak_day = self._conn.execute(
-                """
-                SELECT substr(created_at, 1, 10) AS day, COUNT(*) AS count
-                FROM copy_events
-                WHERE ok = 1 AND created_at_ts >= ? AND created_at_ts < ?
+                f"""
+                SELECT substr(ce.created_at, 1, 10) AS day, COUNT(*) AS count
+                FROM copy_events AS ce
+                {moderation_join}
+                WHERE ce.ok = 1 AND ce.created_at_ts >= ? AND ce.created_at_ts < ?
+                {visible_condition}
                 GROUP BY day
                 ORDER BY count DESC, day ASC
                 LIMIT 1
+                """,
+                (start.timestamp(), end.timestamp()),
+            ).fetchone()
+            active_days = self._conn.execute(
+                f"""
+                SELECT COUNT(DISTINCT substr(ce.created_at, 1, 10)) AS count
+                FROM copy_events AS ce
+                {moderation_join}
+                WHERE ce.ok = 1 AND ce.created_at_ts >= ? AND ce.created_at_ts < ?
+                {visible_condition}
                 """,
                 (start.timestamp(), end.timestamp()),
             ).fetchone()
@@ -274,6 +311,7 @@ class EventStore:
             peak_hour_count=int(peak_hour["count"] or 0) if peak_hour else 0,
             peak_day=str(peak_day["day"]) if peak_day else "",
             peak_day_count=int(peak_day["count"] or 0) if peak_day else 0,
+            active_day_count=int(active_days["count"] or 0),
         )
 
     def failure_summary_between(self, start: datetime, end: datetime, limit: int = 3) -> list[dict]:

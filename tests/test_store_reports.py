@@ -5,7 +5,13 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from assistant_bot.reports import format_report, manual_period, scheduled_period, should_run_report
+from assistant_bot.reports import (
+    format_report,
+    manual_period,
+    previous_period,
+    scheduled_period,
+    should_run_report,
+)
 from assistant_bot.store import EventStore, ModerationStats, Stats
 
 
@@ -128,6 +134,45 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertEqual(stats.peak_hour_count, 2)
         self.assertEqual(stats.peak_day, "2026-07-09")
         self.assertEqual(stats.peak_day_count, 3)
+        self.assertEqual(stats.active_day_count, 2)
+
+    def test_report_stats_exclude_deleted_posts_from_their_original_period(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "assistant.sqlite3")
+            try:
+                store.record_copy_success("-1001", "source", 10, "42", 99, datetime(2026, 7, 9, 1, 15, tzinfo=TZ))
+                store.record_copy_success("-1001", "source", 11, "42", 100, datetime(2026, 7, 9, 20, 10, tzinfo=TZ))
+                store.record_copy_success("-1001", "source", 12, "42", 101, datetime(2026, 7, 10, 21, 0, tzinfo=TZ))
+                store.record_copy_success("-1001", "source", 13, "42", 102, datetime(2026, 7, 10, 21, 30, tzinfo=TZ))
+                store.record_copy_failure("-1001", "source", 14, "42", "bad request", datetime(2026, 7, 10, 22, 0, tzinfo=TZ))
+
+                store.record_moderation_post("-1001", "source", 11, datetime(2026, 7, 9, 20, 10, tzinfo=TZ))
+                store.complete_moderation(
+                    "-1001",
+                    11,
+                    "deleted",
+                    "deleted",
+                    "owner_reply",
+                    datetime(2026, 7, 11, 8, 0, tzinfo=TZ),
+                )
+
+                stats = store.report_stats_between(
+                    datetime(2026, 7, 9, 0, 0, tzinfo=TZ),
+                    datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
+                )
+            finally:
+                store.close()
+
+        self.assertEqual(stats.success_count, 3)
+        self.assertEqual(stats.failure_count, 1)
+        self.assertEqual(stats.total_count, 4)
+        self.assertEqual(stats.first_success_at, "2026-07-09T01:15:00+08:00")
+        self.assertEqual(stats.last_success_at, "2026-07-10T21:30:00+08:00")
+        self.assertEqual(stats.peak_hour, 21)
+        self.assertEqual(stats.peak_hour_count, 2)
+        self.assertEqual(stats.peak_day, "2026-07-10")
+        self.assertEqual(stats.peak_day_count, 2)
+        self.assertEqual(stats.active_day_count, 2)
 
     def test_store_creates_indexes_for_report_queries(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -268,12 +313,20 @@ class StoreAndReportTests(unittest.TestCase):
                 store.close()
         period = scheduled_period("daily", datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
 
-        text = format_report("daily", period, stats, datetime(2026, 7, 10, 0, 0, tzinfo=TZ))
+        text = format_report(
+            "daily",
+            period,
+            stats,
+            datetime(2026, 7, 10, 0, 0, tzinfo=TZ),
+            previous_success_count=1,
+        )
 
         self.assertIn("📊昨日日报", text)
         self.assertIn("日期：2026-07-09", text)
         self.assertIn("转发：3条", text)
-        self.assertIn("活跃时段：20:00-21:00", text)
+        self.assertIn("较前日：增加2条", text)
+        self.assertIn("高峰时段：20:00-21:00", text)
+        self.assertIn("高峰转发：2条", text)
         self.assertIn("首次转发：01:18", text)
         self.assertIn("最后转发：20:45", text)
         self.assertIn("运行状态：正常", text)
@@ -321,7 +374,7 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertNotIn("bad request", failed_text)
         self.assertIn("运行状态：有异常", failed_text)
 
-    def test_report_includes_moderation_statistics(self):
+    def test_report_can_hide_moderation_statistics(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = EventStore(Path(tmp) / "assistant.sqlite3")
             try:
@@ -339,11 +392,12 @@ class StoreAndReportTests(unittest.TestCase):
             stats,
             datetime(2026, 7, 11, 0, 0, tzinfo=TZ),
             moderation_stats=ModerationStats(deleted_count=2, kept_count=1, protected_count=1),
+            include_moderation=False,
         )
 
-        self.assertIn("内容纠错：删除2条", text)
-        self.assertIn("纠错保留：1条", text)
-        self.assertIn("批量保护：1次", text)
+        self.assertNotIn("内容纠错", text)
+        self.assertNotIn("纠错保留", text)
+        self.assertNotIn("批量保护", text)
 
     def test_report_can_hide_runtime_diagnostics_for_report_group(self):
         stats = Stats(
@@ -401,9 +455,69 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertIn("周期：2026-07-06至2026-07-12", text)
         self.assertIn("转发：4条", text)
         self.assertIn("日均：0.6条", text)
-        self.assertIn("最活跃：07-10（3条）", text)
+        self.assertIn("活跃天数：2天", text)
+        self.assertIn("最活跃日：07-10（3条）", text)
+        self.assertIn("首次转发：07-06 09:00", text)
         self.assertIn("最后转发：07-10 20:00", text)
         self.assertNotIn("约", text)
+
+    def test_report_change_lines_cover_increase_decrease_and_tie(self):
+        stats = Stats(
+            success_count=4,
+            failure_count=0,
+            total_count=4,
+            first_success_at="2026-07-06T09:00:00+08:00",
+            last_success_at="2026-07-10T20:00:00+08:00",
+            peak_hour=20,
+            peak_hour_count=2,
+            peak_day="2026-07-10",
+            peak_day_count=3,
+            last_failure="-",
+            active_day_count=2,
+        )
+        cases = (
+            ("daily", datetime(2026, 7, 11, 0, 0, tzinfo=TZ), 1, "较前日：增加3条"),
+            ("weekly", datetime(2026, 7, 13, 0, 0, tzinfo=TZ), 6, "较前周：减少2条"),
+            ("monthly", datetime(2026, 8, 1, 0, 0, tzinfo=TZ), 4, "较前月：持平"),
+        )
+
+        for kind, now, previous_count, expected in cases:
+            with self.subTest(kind=kind):
+                text = format_report(
+                    kind,
+                    scheduled_period(kind, now),
+                    stats,
+                    now,
+                    previous_success_count=previous_count,
+                    include_diagnostics=False,
+                    include_moderation=False,
+                )
+                self.assertIn(expected, text)
+
+    def test_previous_period_handles_daily_weekly_and_variable_month_lengths(self):
+        cases = (
+            (
+                scheduled_period("daily", datetime(2026, 7, 10, 0, 0, tzinfo=TZ)),
+                datetime(2026, 7, 8, 0, 0, tzinfo=TZ),
+                datetime(2026, 7, 9, 0, 0, tzinfo=TZ),
+            ),
+            (
+                scheduled_period("weekly", datetime(2026, 7, 13, 0, 0, tzinfo=TZ)),
+                datetime(2026, 6, 29, 0, 0, tzinfo=TZ),
+                datetime(2026, 7, 6, 0, 0, tzinfo=TZ),
+            ),
+            (
+                scheduled_period("monthly", datetime(2026, 3, 1, 0, 0, tzinfo=TZ)),
+                datetime(2026, 1, 1, 0, 0, tzinfo=TZ),
+                datetime(2026, 2, 1, 0, 0, tzinfo=TZ),
+            ),
+        )
+
+        for period, expected_start, expected_end in cases:
+            with self.subTest(kind=period.kind):
+                previous = previous_period(period)
+                self.assertEqual(previous.start, expected_start)
+                self.assertEqual(previous.end, expected_end)
 
     def test_scheduled_report_titles_describe_previous_periods(self):
         with tempfile.TemporaryDirectory() as tmp:

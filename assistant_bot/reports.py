@@ -18,6 +18,12 @@ REPORT_TITLES = {
     "monthly": "上月月报",
 }
 
+COMPARISON_LABELS = {
+    "daily": "较前日",
+    "weekly": "较前周",
+    "monthly": "较前月",
+}
+
 
 def format_display_time(value: str | datetime, reference: datetime) -> str:
     if value == "-":
@@ -156,6 +162,13 @@ def scheduled_period(kind: str, now: datetime) -> Period:
     raise ValueError(f"unknown report kind: {kind}")
 
 
+def previous_period(period: Period) -> Period:
+    if period.kind == "monthly":
+        return Period(period.kind, previous_month_start(period.start), period.start)
+    duration = period.end - period.start
+    return Period(period.kind, period.start - duration, period.start)
+
+
 def should_run_report(kind: str, now: datetime, hour: int, minute: int) -> bool:
     if now.hour != hour or now.minute != minute:
         return False
@@ -178,6 +191,17 @@ def _moderation_lines(moderation_stats: ModerationStats | None) -> list[str]:
     return lines
 
 
+def format_count_change(label: str, current_count: int, previous_count: int) -> str:
+    difference = int(current_count) - int(previous_count)
+    if difference > 0:
+        value = f"增加{difference}条"
+    elif difference < 0:
+        value = f"减少{abs(difference)}条"
+    else:
+        value = "持平"
+    return f"{label}：{value}"
+
+
 def format_report(
     kind: str,
     period: Period,
@@ -185,38 +209,43 @@ def format_report(
     generated_at: datetime,
     moderation_stats: ModerationStats | None = None,
     include_diagnostics: bool = True,
+    previous_success_count: int | None = None,
+    include_moderation: bool = True,
 ) -> str:
     title = REPORT_TITLES.get(kind, report_name(kind))
     period_field = report_period_field(kind)
     period_label = format_period_label(period)
     status = "正常" if stats.failure_count == 0 else "有异常"
-    if stats.total_count == 0:
-        lines = [
-            f"📊{title}",
-            f"{period_field}：{period_label}",
-            "转发：0条",
-        ]
-        lines.extend(_moderation_lines(moderation_stats))
-        if include_diagnostics:
-            lines.extend(["运行状态：待命中", "异常记录：0次"])
-        return "\n".join(lines)
-
     lines = [
         f"📊{title}",
         f"{period_field}：{period_label}",
         f"转发：{stats.success_count}条",
     ]
+    if previous_success_count is not None:
+        lines.append(
+            format_count_change(
+                COMPARISON_LABELS.get(kind, "较前期"),
+                stats.success_count,
+                previous_success_count,
+            )
+        )
     if kind == "daily" and stats.peak_hour is not None:
-        lines.append(f"活跃时段：{_format_peak_hour(stats.peak_hour)}")
+        lines.append(f"高峰时段：{_format_peak_hour(stats.peak_hour)}")
+        lines.append(f"高峰转发：{stats.peak_hour_count}条")
         lines.append(f"首次转发：{_format_report_time(stats.first_success_at, period, generated_at)}")
     elif kind in {"weekly", "monthly"}:
         lines.append(f"日均：{_format_average(stats.success_count, _covered_days(period))}条")
+        lines.append(f"活跃天数：{stats.active_day_count}天")
         if stats.peak_day:
-            lines.append(f"最活跃：{stats.peak_day[5:]}（{stats.peak_day_count}条）")
+            lines.append(f"最活跃日：{stats.peak_day[5:]}（{stats.peak_day_count}条）")
+            lines.append(f"首次转发：{_format_report_time(stats.first_success_at, period, generated_at)}")
     if stats.success_count:
         lines.append(f"最后转发：{_format_report_time(stats.last_success_at, period, generated_at)}")
-    lines.extend(_moderation_lines(moderation_stats))
+    if include_moderation:
+        lines.extend(_moderation_lines(moderation_stats))
     if include_diagnostics:
+        if stats.total_count == 0:
+            status = "待命中"
         lines.extend(
             [
                 f"运行状态：{status}",

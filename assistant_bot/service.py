@@ -10,10 +10,12 @@ from zoneinfo import ZoneInfo
 from . import __version__
 from .config import BotConfig, chat_ref_for_api, chat_username_ref, normalize_chat_ref
 from .reports import (
+    format_count_change,
     format_display_time,
     format_period_label,
     format_report,
     manual_period,
+    previous_period,
     report_name,
     report_period_field,
     scheduled_period,
@@ -744,6 +746,32 @@ class AssistantService:
     def current_report_text(self, include_diagnostics: bool = True) -> str:
         now = self._now()
         today = manual_period("daily", now)
+        if not include_diagnostics:
+            stats = self.store.report_stats_between(today.start, today.end)
+            previous_stats = self.store.report_stats_between(
+                today.start - timedelta(days=1),
+                today.end - timedelta(days=1),
+            )
+            recent = format_display_time(stats.last_success_at, now)
+            lines = [
+                "📌当前概览",
+                f"日期：{today.start:%Y-%m-%d}",
+                f"转发：{stats.success_count}条",
+                format_count_change("较昨日同期", stats.success_count, previous_stats.success_count),
+            ]
+            if stats.peak_hour is not None:
+                lines.extend(
+                    [
+                        f"高峰时段：{stats.peak_hour:02d}:00-{stats.peak_hour + 1:02d}:00",
+                        f"高峰转发：{stats.peak_hour_count}条",
+                        f"首次转发：{format_display_time(stats.first_success_at, now)}",
+                        f"最后转发：{recent}",
+                    ]
+                )
+            else:
+                lines.append("今日暂无明显转发")
+            return "\n".join(lines)
+
         stats = self.store.stats_between(today.start, today.end)
         moderation_stats = self.store.moderation_stats_between(today.start, today.end)
         recent = format_display_time(stats.last_success_at, now)
@@ -792,7 +820,9 @@ class AssistantService:
             period = scheduled_period(kind, now)
             if self.store.was_report_sent(kind, period.key):
                 continue
-            stats = self.store.stats_between(period.start, period.end)
+            stats = self.store.report_stats_between(period.start, period.end)
+            comparison_period = previous_period(period)
+            previous_stats = self.store.report_stats_between(comparison_period.start, comparison_period.end)
             moderation_stats = self.store.moderation_stats_between(period.start, period.end)
             pending.append(
                 {
@@ -807,6 +837,8 @@ class AssistantService:
                         now,
                         moderation_stats=moderation_stats,
                         include_diagnostics=False,
+                        previous_success_count=previous_stats.success_count,
+                        include_moderation=False,
                     ),
                     "title": report_name(kind),
                 }
