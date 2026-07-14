@@ -97,15 +97,16 @@ class RepositoryReleaseTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
 
-        version = "0.1.28"
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        file_version = version.replace(".", "_")
         expected_names = (
-            "slowlink_assistant_bot_app_v0_1_28.zip",
-            "slowlink_assistant_bot_v0_1_28_full.zip",
-            "slowlink_assistant_bot_v0_1_28_update_log.txt",
+            f"slowlink_assistant_bot_app_v{file_version}.zip",
+            f"slowlink_assistant_bot_v{file_version}_full.zip",
+            f"slowlink_assistant_bot_v{file_version}_update_log.txt",
             "SHA256SUMS.txt",
         )
         self.assertEqual(module.expected_asset_names(version), expected_names)
-        self.assertIn("## [0.1.28]", module.extract_changelog(version))
+        self.assertIn(f"## [{version}]", module.extract_changelog(version))
 
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir)
@@ -152,7 +153,7 @@ class RepositoryReleaseTests(unittest.TestCase):
                     member,
                 )
 
-            self.assertIn("## [0.1.28]", update_log.read_text(encoding="utf-8"))
+            self.assertIn(f"## [{version}]", update_log.read_text(encoding="utf-8"))
             checksum_lines = checksum_file.read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(checksum_lines), 2)
             self.assertEqual(
