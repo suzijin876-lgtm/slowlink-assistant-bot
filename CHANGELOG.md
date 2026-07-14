@@ -2,6 +2,13 @@
 
 本项目从V0.1.15起使用GitHub Releases保存安装包，Git仓库只保留源码、文档和发布记录。
 
+## [0.1.24] - 2026-07-14
+
+- 公开普通帖子和论坛话题链接新增支持`https://telegram.me/用户名/消息ID`与`https://telegram.me/用户名/话题ID/消息ID`。
+- 私有普通帖子和论坛话题继续使用`https://t.me/c/内部ID/消息ID`与`https://t.me/c/内部ID/话题ID/消息ID`。
+- 保留旧公开`t.me`帖子输入兼容；Bot仍通过`copyMessage`原样复制，不改写用户原文、Bot链接、邀请链接或Telegram API地址。
+- 增加四种链接形态回归测试；报表、权限、SQLite和watchdog逻辑保持不变。
+
 ## [0.1.23] - 2026-07-13
 
 - Telegram长轮询遇到裸`TimeoutError`时自动轻量重试一次，避免短暂网络波动直接进入主循环异常。

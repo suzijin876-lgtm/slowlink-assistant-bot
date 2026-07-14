@@ -35,7 +35,10 @@ MODERATION_POST_MAX_AGE = timedelta(hours=1)
 MODERATION_AUTO_DELETE_LIMIT = 4
 MODERATION_AUTO_DELETE_WINDOW = timedelta(minutes=10)
 TELEGRAM_POST_LINK_RE = re.compile(
-    r"https://t\.me/(?:[A-Za-z0-9_]+/[1-9]\d*|c/[1-9]\d*/[1-9]\d*)",
+    r"https://(?:"
+    r"(?:t\.me|telegram\.me)/(?!c/)[A-Za-z0-9_]+/[1-9]\d*(?:/[1-9]\d*)?"
+    r"|t\.me/c/[1-9]\d*/[1-9]\d*(?:/[1-9]\d*)?"
+    r")",
     re.IGNORECASE,
 )
 
