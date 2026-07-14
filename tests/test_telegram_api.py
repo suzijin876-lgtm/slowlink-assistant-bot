@@ -104,6 +104,18 @@ class TelegramAPITests(unittest.TestCase):
         self.assertEqual(calls[0][0], "sendMessage")
         self.assertEqual(calls[0][1]["reply_markup"], keyboard)
 
+    def test_send_photo_uses_file_id_and_caption(self):
+        api, calls = self.make_capturing_api()
+
+        api.send_photo(-1009, "photo-file-id", "📊昨日日报")
+
+        self.assertEqual(calls[0][0], "sendPhoto")
+        self.assertEqual(
+            calls[0][1],
+            {"chat_id": -1009, "photo": "photo-file-id", "caption": "📊昨日日报"},
+        )
+        self.assertEqual(calls[0][2], 30)
+
     def test_delete_message_uses_expected_payload(self):
         api, calls = self.make_capturing_api()
 

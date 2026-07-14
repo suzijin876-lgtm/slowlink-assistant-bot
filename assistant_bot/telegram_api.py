@@ -96,6 +96,13 @@ class TelegramAPI:
             payload["reply_markup"] = reply_markup
         return self._request("sendMessage", payload, timeout=30)
 
+    def send_photo(self, chat_id, photo: str, caption: str):
+        return self._request(
+            "sendPhoto",
+            {"chat_id": chat_id, "photo": str(photo), "caption": str(caption)},
+            timeout=30,
+        )
+
     def edit_message_text(self, chat_id, message_id: int, text: str, reply_markup=None):
         payload = {"chat_id": chat_id, "message_id": int(message_id), "text": text}
         if reply_markup is not None:
