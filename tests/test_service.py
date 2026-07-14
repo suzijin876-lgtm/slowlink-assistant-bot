@@ -968,6 +968,82 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertEqual(len(self.api.sent), 1)
         self.assertIn("未知命令", self.api.sent[0][1])
 
+    def test_owner_can_set_replace_query_and_disable_scheduled_report_cover(self):
+        self.make_service()
+
+        self.service.handle_update({
+            "update_id": 201,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "caption": "/cover",
+                "photo": [
+                    {"file_id": "cover-small", "file_size": 100, "width": 320, "height": 180},
+                    {"file_id": "cover-a", "file_size": 1000, "width": 1280, "height": 720},
+                ],
+            },
+        })
+        self.assertEqual(self.store.get_state("scheduled_report_cover_file_id"), "cover-a")
+        self.assertIn("简报封面已更新", self.api.sent[-1][1])
+
+        self.service.handle_update({
+            "update_id": 202,
+            "message": {
+                "message_id": 2,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "caption": "/cover",
+                "photo": [{"file_id": "cover-b", "width": 1920, "height": 1080}],
+            },
+        })
+        self.assertEqual(self.store.get_state("scheduled_report_cover_file_id"), "cover-b")
+
+        self.service.handle_update({
+            "update_id": 203,
+            "message": {
+                "message_id": 3,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "text": "/cover",
+            },
+        })
+        self.assertIn("简报封面：已启用", self.api.sent[-1][1])
+
+        self.service.handle_update({
+            "update_id": 204,
+            "message": {
+                "message_id": 4,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "text": "/cover off",
+            },
+        })
+        self.assertIsNone(self.store.get_state("scheduled_report_cover_file_id"))
+        self.assertIn("简报封面已停用", self.api.sent[-1][1])
+
+    def test_non_owner_cannot_change_scheduled_report_cover(self):
+        self.make_service()
+
+        self.service.handle_update({
+            "update_id": 205,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 99, "type": "private"},
+                "from": {"id": 99},
+                "caption": "/cover",
+                "photo": [{"file_id": "not-allowed", "width": 1280, "height": 720}],
+            },
+        })
+
+        self.assertIsNone(self.store.get_state("scheduled_report_cover_file_id"))
+        self.assertEqual(self.api.sent, [])
+
+    def test_cover_command_is_hidden_from_runtime_help(self):
+        self.make_service()
+
+        self.assertNotIn("/cover", self.service.help_text())
+
     def test_private_id_command_is_removed(self):
         self.make_service()
 

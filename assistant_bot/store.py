@@ -646,6 +646,10 @@ class EventStore:
                 (str(key), str(value)),
             )
 
+    def delete_state(self, key: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM state WHERE key = ?", (str(key),))
+
     def get_offset(self) -> int | None:
         with self._lock:
             row = self._conn.execute("SELECT value FROM state WHERE key = 'update_offset'").fetchone()

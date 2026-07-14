@@ -30,6 +30,7 @@ EVENT_RETENTION_DAYS = 90
 UNAUTHORIZED_CHAT_NOTICE_INTERVAL = timedelta(hours=1)
 WATCHDOG_STATUS_MAX_AGE = timedelta(seconds=120)
 LAST_REPORT_PIN_STATE_KEY = "last_report_pin_message_id"
+REPORT_COVER_STATE_KEY = "scheduled_report_cover_file_id"
 MODERATION_MIN_DOWNVOTES = 2
 MODERATION_MIN_POOPS = 2
 MODERATION_DELETE_DELAY = timedelta(minutes=1)
@@ -546,8 +547,13 @@ class AssistantService:
             if text in OWNER_REPLY_DELETE_COMMANDS:
                 self._handle_owner_reply_action(message, text)
                 return
-            if text.startswith("/"):
-                self._handle_owner_command(text)
+            command_text = str(message.get("text") or message.get("caption") or "").strip()
+            if command_text.startswith("/"):
+                command = command_text.split()[0].split("@")[0].lower()
+                if command == "/cover":
+                    self._handle_cover_command(message, command_text)
+                else:
+                    self._handle_owner_command(command_text)
             return
 
         if chat_type in {"group", "supergroup"}:
@@ -557,6 +563,41 @@ class AssistantService:
                 return
             if chat_id == self.config.report_chat_id:
                 self._handle_report_group_command(chat_id, user_id, text)
+
+    def _handle_cover_command(self, message: dict[str, Any], text: str) -> None:
+        parts = text.split()
+        if len(parts) > 1 and parts[1].lower() == "off":
+            self.store.delete_state(REPORT_COVER_STATE_KEY)
+            self.api.send_message(
+                self.config.owner_user_id,
+                "✅简报封面已停用\n定时报表将恢复纯文字",
+            )
+            LOG.info("简报封面已停用")
+            return
+
+        photos = [item for item in message.get("photo") or [] if item.get("file_id")]
+        if photos:
+            selected = max(
+                photos,
+                key=lambda item: (
+                    int(item.get("file_size") or 0),
+                    int(item.get("width") or 0) * int(item.get("height") or 0),
+                ),
+            )
+            self.store.set_state(REPORT_COVER_STATE_KEY, str(selected["file_id"]))
+            self.api.send_message(
+                self.config.owner_user_id,
+                "✅简报封面已更新\n适用于：日报、周报、月报",
+            )
+            LOG.info("简报封面已更新")
+            return
+
+        enabled = bool(self.store.get_state(REPORT_COVER_STATE_KEY))
+        status = "已启用" if enabled else "未设置"
+        self.api.send_message(
+            self.config.owner_user_id,
+            f"🖼️简报封面：{status}\n发送图片并附带 /cover 即可设置\n发送 /cover off 可停用",
+        )
 
     def _handle_report_group_command(self, chat_id: str, user_id: int, text: str) -> None:
         if user_id != self.config.owner_user_id or not text.startswith("/"):
