@@ -153,13 +153,14 @@ watchdog 状态含义：
 ## 稳定性
 
 - Docker Compose 使用 `restart: always`。
-- Docker healthcheck 会检查 Python 包和版本是否可加载。
+- Docker healthcheck 会检查 Bot 主循环心跳是否在 120 秒内更新。
 - 消息堆积时主循环会连续处理更新，空闲时才短暂停顿。
 - Telegram API 对临时网络错误、读取超时、限流和 5xx 错误会做一次轻量重试。
 - 长轮询连续超时只写一行中文警告；未知程序异常仍记录完整堆栈。
 - SQLite 报表查询字段已建索引，记录变多后统计更稳。
-- 独立 systemd watchdog 监控 `slowlink_assistant_bot` 容器 CPU。
+- 独立 systemd watchdog 监控 `slowlink_assistant_bot` 容器 CPU 和主循环心跳。
 - CPU 连续 4 次超过 85%，每次间隔 20 秒，watchdog 会重启 Bot 容器。
+- 心跳连续 2 次超过 120 秒或不存在时，watchdog 会重启 Bot 容器。
 - 重启后有 600 秒冷却，避免反复重启。
 - watchdog 会写中文日志和状态文件。
 - watchdog 自动重启 Bot 后，会私聊提醒你。
@@ -168,6 +169,7 @@ watchdog 状态含义：
 
 - Bot Docker 日志为中文。
 - Bot Docker 日志使用北京时间。
+- Docker JSON 日志单文件上限 10MB，最多保留 3 份。
 - 报表日志使用“日报、周报、月报”，不显示内部英文类型。
 - 频道纠错日志记录待删除、取消、保留、删除失败和批量保护。
 - watchdog 日志为中文。
