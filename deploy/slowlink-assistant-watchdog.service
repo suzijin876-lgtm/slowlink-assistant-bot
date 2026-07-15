@@ -13,6 +13,9 @@ Environment=COOLDOWN_SECONDS=600
 Environment=LOG_FILE=/opt/slowlink_assistant_bot/watchdog.log
 Environment=ENV_FILE=/opt/slowlink_assistant_bot/.env
 Environment=STATUS_FILE=/opt/slowlink_assistant_bot/data/watchdog_status.txt
+Environment=HEARTBEAT_FILE=/opt/slowlink_assistant_bot/data/bot_heartbeat
+Environment=HEARTBEAT_MAX_AGE=120
+Environment=STALE_COUNT_LIMIT=2
 ExecStart=/bin/sh /opt/slowlink_assistant_bot/ops/slowlink_assistant_watchdog.sh
 Restart=always
 RestartSec=5

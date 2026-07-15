@@ -133,6 +133,7 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
             self.assertIn(option, text)
         self.assertIn("尚未检测到安装，请先选择1安装", text)
         self.assertIn("请输入0、1、2、3或4", text)
+        self.assertEqual(text.count("printf '请选择：' > /dev/tty"), 2)
 
     def test_config_editor_is_atomic_scoped_and_rolls_back_on_unhealthy_container(self):
         text = self.read_required("install.sh")

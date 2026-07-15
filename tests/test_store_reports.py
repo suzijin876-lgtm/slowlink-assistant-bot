@@ -721,6 +721,18 @@ class StoreAndReportTests(unittest.TestCase):
         self.assertEqual(should_run_report("weekly", now, 0, 0), False)
         self.assertEqual(should_run_report("monthly", now, 0, 0), True)
 
+    def test_should_run_reports_after_scheduled_time_for_catch_up(self):
+        self.assertTrue(should_run_report("daily", datetime(2026, 7, 16, 8, 5, tzinfo=TZ), 8, 0))
+        self.assertTrue(should_run_report("weekly", datetime(2026, 7, 13, 12, 0, tzinfo=TZ), 8, 0))
+        self.assertTrue(should_run_report("monthly", datetime(2026, 7, 1, 12, 0, tzinfo=TZ), 8, 0))
+        self.assertFalse(should_run_report("weekly", datetime(2026, 7, 14, 12, 0, tzinfo=TZ), 8, 0))
+        self.assertFalse(should_run_report("monthly", datetime(2026, 7, 15, 12, 0, tzinfo=TZ), 8, 0))
+
+    def test_should_not_run_reports_before_current_period_schedule(self):
+        self.assertFalse(should_run_report("daily", datetime(2026, 7, 16, 7, 59, tzinfo=TZ), 8, 0))
+        self.assertFalse(should_run_report("weekly", datetime(2026, 7, 13, 7, 59, tzinfo=TZ), 8, 0))
+        self.assertFalse(should_run_report("monthly", datetime(2026, 7, 1, 7, 59, tzinfo=TZ), 8, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

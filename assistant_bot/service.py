@@ -961,6 +961,14 @@ class AssistantService:
             period = scheduled_period(kind, now)
             if self.store.was_report_sent(kind, period.key):
                 continue
+            scheduled_at = now.replace(
+                hour=self.config.report_hour,
+                minute=self.config.report_minute,
+                second=0,
+                microsecond=0,
+            )
+            if now > scheduled_at and coverage_start >= period.end:
+                continue
             stats = self.store.report_stats_between(period.start, period.end)
             comparison_period = previous_period(period)
             previous_count = self._comparison_count(comparison_period, coverage_start)

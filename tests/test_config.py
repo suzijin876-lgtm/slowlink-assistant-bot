@@ -6,6 +6,14 @@ from assistant_bot.config import BotConfig, ConfigError, chat_ref_for_api, norma
 
 
 class ConfigTests(unittest.TestCase):
+    def valid_env(self):
+        return {
+            "BOT_TOKEN": "123:abc",
+            "OWNER_USER_ID": "42",
+            "REPORT_CHAT_ID": "-1009",
+            "SOURCE_CHANNEL_IDS": "-1001",
+        }
+
     def test_parse_chat_refs_accepts_ids_and_usernames(self):
         self.assertEqual(
             parse_chat_refs("-1001, @ShardCatDen, source_channel"),
@@ -47,6 +55,29 @@ class ConfigTests(unittest.TestCase):
             BotConfig.load(env={}, env_file=None)
 
         self.assertIn("BOT_TOKEN", str(ctx.exception))
+
+    def test_invalid_runtime_config_raises_clear_config_error(self):
+        cases = (
+            ("OWNER_USER_ID", "0", "大于0"),
+            ("POLL_TIMEOUT", "0", "POLL_TIMEOUT"),
+            ("POLL_INTERVAL", "not-a-number", "POLL_INTERVAL"),
+            ("REPORT_HOUR", "24", "REPORT_HOUR"),
+            ("REPORT_MINUTE", "60", "REPORT_MINUTE"),
+            ("TIMEZONE", "Not/A-Timezone", "TIMEZONE"),
+        )
+
+        for name, value, expected in cases:
+            with self.subTest(name=name):
+                env = self.valid_env()
+                env[name] = value
+                try:
+                    BotConfig.load(env=env, env_file=None)
+                except ConfigError as exc:
+                    self.assertRegex(str(exc), expected)
+                except Exception as exc:
+                    self.fail(f"{name} raised {type(exc).__name__} instead of ConfigError: {exc}")
+                else:
+                    self.fail(f"{name} did not raise ConfigError")
 
 
 if __name__ == "__main__":

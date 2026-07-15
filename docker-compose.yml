@@ -7,8 +7,13 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
-      test: ["CMD", "python", "-c", "import assistant_bot; print(assistant_bot.__version__)"]
+      test: ["CMD", "python", "-c", "from assistant_bot.config import BotConfig; from assistant_bot.health import heartbeat_is_fresh; assert heartbeat_is_fresh(BotConfig.load().data_path)"]
       interval: 60s
       timeout: 10s
       retries: 3

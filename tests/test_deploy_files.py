@@ -7,8 +7,9 @@ class DeployFileTests(unittest.TestCase):
         text = Path("docker-compose.yml").read_text(encoding="utf-8")
 
         self.assertIn("healthcheck:", text)
-        self.assertIn("python", text)
-        self.assertIn("assistant_bot", text)
+        self.assertIn("heartbeat_is_fresh", text)
+        self.assertIn('max-size: "10m"', text)
+        self.assertIn('max-file: "3"', text)
 
     def test_dockerignore_keeps_build_context_small(self):
         text = Path(".dockerignore").read_text(encoding="utf-8")
@@ -38,6 +39,13 @@ class DeployFileTests(unittest.TestCase):
         self.assertIn("CPU过高，Bot已自动重启", script_text)
         self.assertIn("BOT_TOKEN", script_text)
         self.assertIn("OWNER_USER_ID", script_text)
+        self.assertIn("HEARTBEAT_FILE=", service_text)
+        self.assertIn("HEARTBEAT_MAX_AGE=120", service_text)
+        self.assertIn("Bot心跳超时", script_text)
+        self.assertIn("heartbeat_age", script_text)
+
+        install_text = Path("install.sh").read_text(encoding="utf-8")
+        self.assertIn('systemctl restart "$WATCHDOG_SERVICE"', install_text)
 
     def test_runtime_log_messages_are_chinese(self):
         main_text = Path("assistant_bot/__main__.py").read_text(encoding="utf-8")

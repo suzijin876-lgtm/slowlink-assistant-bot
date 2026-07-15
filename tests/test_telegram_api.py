@@ -95,6 +95,12 @@ class TelegramAPITests(unittest.TestCase):
 
         self.assertEqual(len(calls), 2)
 
+    def test_retry_delay_respects_telegram_retry_after_with_sane_cap(self):
+        api = TelegramAPI("123:abc")
+
+        self.assertEqual(api._retry_delay({"parameters": {"retry_after": 8}}), 8.0)
+        self.assertEqual(api._retry_delay({"parameters": {"retry_after": 300}}), 30.0)
+
     def test_send_message_accepts_inline_keyboard(self):
         api, calls = self.make_capturing_api()
         keyboard = {"inline_keyboard": [[{"text": "保留", "callback_data": "mod:keep:-1001:55"}]]}

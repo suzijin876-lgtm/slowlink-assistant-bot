@@ -1204,6 +1204,26 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("日报发送完成：日期=2026-07-09 转发=1条 异常=0次 纠错删除=1条", logs)
         self.assertNotIn("类型=daily", logs)
 
+    def test_scheduled_daily_report_catches_up_after_exact_minute(self):
+        self.make_service()
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 7, 8, 0, 0, tzinfo=TZ).isoformat())
+        self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 9, 1, 0, tzinfo=TZ))
+        now = datetime(2026, 7, 10, 0, 5, tzinfo=TZ)
+
+        self.service.run_due_reports(now)
+        self.service.run_due_reports(now + timedelta(minutes=1))
+
+        self.assertEqual(len(self.api.sent), 1)
+        self.assertIn("📊昨日日报", self.api.sent[0][1])
+        self.assertIn("日期：2026-07-09", self.api.sent[0][1])
+
+    def test_fresh_install_does_not_backfill_periods_without_history(self):
+        self.make_service()
+
+        self.service.run_due_reports(datetime(2026, 7, 10, 12, 0, tzinfo=TZ))
+
+        self.assertEqual(self.api.sent, [])
+
     def test_scheduled_report_does_not_treat_missing_history_as_zero(self):
         self.make_service()
         self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 9, 1, 0, tzinfo=TZ))

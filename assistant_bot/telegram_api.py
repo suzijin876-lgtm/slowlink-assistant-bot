@@ -35,7 +35,7 @@ class TelegramAPI:
             delay = float(retry_after) if retry_after is not None else self.retry_delay
         except (TypeError, ValueError):
             delay = self.retry_delay
-        return min(max(delay, 0.1), 3.0)
+        return min(max(delay, 0.1), 30.0)
 
     def _request(self, method: str, payload: dict[str, Any], timeout: int = 35) -> Any:
         url = f"{self.base_url}/bot{self.token}/{method}"

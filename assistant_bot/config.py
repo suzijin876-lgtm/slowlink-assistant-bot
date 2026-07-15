@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class ConfigError(ValueError):
@@ -80,6 +82,36 @@ def _int_value(values: Mapping[str, str], name: str, default: int | None = None)
         raise ConfigError(f"{name} 必须是整数") from exc
 
 
+def _bounded_int(
+    values: Mapping[str, str],
+    name: str,
+    default: int,
+    minimum: int,
+    maximum: int,
+) -> int:
+    value = _int_value(values, name, default)
+    if not minimum <= value <= maximum:
+        raise ConfigError(f"{name} 必须在 {minimum} 到 {maximum} 之间")
+    return value
+
+
+def _float_value(
+    values: Mapping[str, str],
+    name: str,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
+    raw = values.get(name)
+    try:
+        value = float(default if raw is None or raw == "" else raw)
+    except (TypeError, ValueError) as exc:
+        raise ConfigError(f"{name} 必须是数字") from exc
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ConfigError(f"{name} 必须在 {minimum:g} 到 {maximum:g} 之间")
+    return value
+
+
 @dataclass(frozen=True)
 class BotConfig:
     bot_token: str
@@ -105,6 +137,8 @@ class BotConfig:
         if not token:
             raise ConfigError("缺少配置：BOT_TOKEN")
         owner_user_id = _int_value(values, "OWNER_USER_ID")
+        if owner_user_id <= 0:
+            raise ConfigError("OWNER_USER_ID 必须大于0")
         report_chat_id = str(values.get("REPORT_CHAT_ID") or "").strip()
         if not report_chat_id:
             raise ConfigError("缺少配置：REPORT_CHAT_ID")
@@ -117,17 +151,23 @@ class BotConfig:
         if unauthorized_action not in {"leave", "ignore"}:
             raise ConfigError("UNAUTHORIZED_GROUP_ACTION 只能是 leave 或 ignore")
 
+        timezone = str(values.get("TIMEZONE") or "Asia/Shanghai").strip()
+        try:
+            ZoneInfo(timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ConfigError("TIMEZONE 不是有效时区") from exc
+
         return cls(
             bot_token=token,
             owner_user_id=owner_user_id,
             report_chat_id=report_chat_id,
             source_channel_refs=source_channel_refs,
             data_path=str(values.get("DATA_PATH") or "data/assistant.sqlite3"),
-            timezone=str(values.get("TIMEZONE") or "Asia/Shanghai"),
-            poll_timeout=_int_value(values, "POLL_TIMEOUT", 25),
-            poll_interval=float(values.get("POLL_INTERVAL") or 1.0),
-            report_hour=_int_value(values, "REPORT_HOUR", 0),
-            report_minute=_int_value(values, "REPORT_MINUTE", 0),
+            timezone=timezone,
+            poll_timeout=_bounded_int(values, "POLL_TIMEOUT", 25, 1, 50),
+            poll_interval=_float_value(values, "POLL_INTERVAL", 1.0, 0.1, 60.0),
+            report_hour=_bounded_int(values, "REPORT_HOUR", 0, 0, 23),
+            report_minute=_bounded_int(values, "REPORT_MINUTE", 0, 0, 59),
             unauthorized_group_action=unauthorized_action,
             startup_drop_pending_updates=str(values.get("STARTUP_DROP_PENDING_UPDATES") or "0").strip() == "1",
         )

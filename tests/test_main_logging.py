@@ -27,6 +27,13 @@ class MainLoggingTests(unittest.TestCase):
     def test_startup_verifies_source_channel_reactions(self):
         self.assertIn("service.verify_source_reactions()", inspect.getsource(main_module.main))
 
+    def test_main_loop_updates_runtime_heartbeat(self):
+        source = inspect.getsource(main_module.main)
+
+        self.assertIn("heartbeat.clear()", source)
+        self.assertIn("heartbeat.touch(force=True)", source)
+        self.assertGreaterEqual(source.count("heartbeat.touch()"), 2)
+
     def test_expected_poll_error_logs_one_warning_without_traceback(self):
         source = inspect.getsource(main_module.main)
 

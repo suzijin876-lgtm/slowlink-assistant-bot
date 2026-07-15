@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 from . import __version__
 from .config import BotConfig, ConfigError
+from .health import Heartbeat
 from .service import AssistantService
 from .store import EventStore
 from .telegram_api import TelegramAPI, TelegramAPIError
@@ -50,6 +51,8 @@ def main() -> int:
     store = EventStore(config.data_path)
     api = TelegramAPI(config.bot_token)
     service = AssistantService(config, api, store)
+    heartbeat = Heartbeat(config.data_path)
+    heartbeat.clear()
 
     try:
         api.delete_webhook(drop_pending_updates=config.startup_drop_pending_updates)
@@ -57,6 +60,7 @@ def main() -> int:
     except TelegramAPIError as exc:
         log.error("Telegram 初始化失败：%s", exc)
         return 3
+    heartbeat.touch(force=True)
     log.info("SlowLink Assistant 已启动：版本=%s", __version__)
     log.info("Bot 信息：账号=@%s 源频道=%d个 报表群=已配置", me.get("username", "unknown"), len(config.source_channel_refs))
     service.verify_source_reactions()
@@ -68,6 +72,7 @@ def main() -> int:
             for update in updates:
                 service.handle_update(update)
                 offset = store.get_offset()
+                heartbeat.touch()
             service.run_due_moderations()
             service.run_due_reports()
             if should_pause_after_poll(updates):
@@ -81,6 +86,11 @@ def main() -> int:
         except Exception as exc:
             log.exception("主循环异常：%s", exc)
             time.sleep(5)
+        finally:
+            try:
+                heartbeat.touch()
+            except OSError as exc:
+                log.warning("Bot心跳更新失败：%s", exc)
 
 
 if __name__ == "__main__":

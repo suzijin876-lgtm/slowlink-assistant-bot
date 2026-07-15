@@ -193,15 +193,20 @@ def previous_period(period: Period) -> Period:
 
 
 def should_run_report(kind: str, now: datetime, hour: int, minute: int) -> bool:
-    if now.hour != hour or now.minute != minute:
-        return False
     if kind == "daily":
-        return True
-    if kind == "weekly":
-        return now.weekday() == 0
-    if kind == "monthly":
-        return now.day == 1
-    return False
+        anchor = start_of_day(now)
+    elif kind == "weekly":
+        if now.weekday() != 0:
+            return False
+        anchor = start_of_week(now)
+    elif kind == "monthly":
+        if now.day != 1:
+            return False
+        anchor = start_of_month(now)
+    else:
+        return False
+    scheduled_at = anchor.replace(hour=int(hour), minute=int(minute))
+    return now >= scheduled_at
 
 
 def _moderation_lines(moderation_stats: ModerationStats | None) -> list[str]:

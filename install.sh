@@ -250,8 +250,8 @@ uninstall_menu() {
 1.卸载程序，保留配置和数据库
 2.彻底删除程序、配置和数据库
 0.返回上一级
-请选择：
 EOF
+    printf '请选择：' > /dev/tty
     choice=""
     IFS= read -r choice < /dev/tty || choice=""
     case "$choice" in
@@ -284,8 +284,8 @@ SlowLink Assistant Bot 管理
 3.卸载
 4.修改配置
 0.退出
-请选择：
 EOF
+    printf '请选择：' > /dev/tty
     choice=""
     IFS= read -r choice < /dev/tty || choice=""
     case "$choice" in
@@ -503,7 +503,8 @@ if [ "$healthy" -ne 1 ]; then
   die "容器未通过健康检查"
 fi
 
-systemctl enable --now "$WATCHDOG_SERVICE" >/dev/null 2>&1 || die "watchdog启动失败"
+systemctl enable "$WATCHDOG_SERVICE" >/dev/null 2>&1 || die "watchdog启用失败"
+systemctl restart "$WATCHDOG_SERVICE" >/dev/null 2>&1 || die "watchdog启动失败"
 INSTALLED_VERSION=$(docker exec "$CONTAINER" python -c 'import assistant_bot; print(assistant_bot.__version__)')
 log "安装完成：版本=$INSTALLED_VERSION"
 printf '管理命令：sudo %s/manage.sh status\n' "$INSTALL_DIR"
