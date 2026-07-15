@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from . import __version__
+
 
 REPORT_KIND_LABELS = {
     "daily": "日报",
@@ -16,7 +18,13 @@ REPORT_DESTINATION_LABELS = {
 
 
 def main_menu_text() -> str:
-    return "🧭SlowLink Assistant\n请选择功能"
+    return (
+        "🧭SlowLink Assistant控制面板\n"
+        f"版本：V{__version__}\n"
+        "模式：频道消息助手\n"
+        "状态：正常运行\n\n"
+        "💡点击下方按钮进入对应功能"
+    )
 
 
 def main_menu_keyboard() -> dict:

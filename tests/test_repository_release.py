@@ -16,6 +16,15 @@ class RepositoryReleaseTests(unittest.TestCase):
         self.assertTrue(path.is_file(), f"missing {relative_path}")
         return path.read_text(encoding="utf-8")
 
+    def test_current_version_markers_are_consistent(self):
+        version = self.read_required("VERSION").strip()
+        package_init = self.read_required("assistant_bot/__init__.py")
+        self.assertIn(f'__version__ = "{version}"', package_init)
+        self.assertIn(f"## [{version}]", self.read_required("CHANGELOG.md"))
+        self.assertIn(f"当前版本：`{version}`", self.read_required("docs/FEATURES.md"))
+        self.assertIn(f"当前版本：`{version}`", self.read_required("docs/OPERATIONS.md"))
+        self.assertIn(f"当前版本：`{version}`", self.read_required("docs/VERSION_ARCHIVE.md"))
+
     def test_readme_is_concise_and_matches_repository_presentation(self):
         text = self.read_required("README.md")
 

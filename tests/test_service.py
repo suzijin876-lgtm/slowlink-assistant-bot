@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from assistant_bot import __version__
 from assistant_bot.config import BotConfig
 from assistant_bot.reports import scheduled_period
 from assistant_bot.service import AssistantService
@@ -889,11 +890,47 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("SlowLink Assistant", self.api.sent[0][1])
         self.assertNotIn("/status", self.api.sent[0][1])
         keyboard = self.api.sent_reply_markups[0]["inline_keyboard"]
-        labels = [button["text"] for row in keyboard for button in row]
         self.assertEqual(
-            labels,
-            ["📊当前报告", "✅运行状态", "🧾最近记录", "🩺系统自检", "🗓简报设置", "🖼封面管理"],
+            keyboard,
+            [
+                [
+                    {"text": "📊当前报告", "callback_data": "menu:report"},
+                    {"text": "✅运行状态", "callback_data": "menu:status"},
+                ],
+                [
+                    {"text": "🧾最近记录", "callback_data": "menu:recent"},
+                    {"text": "🩺系统自检", "callback_data": "menu:check"},
+                ],
+                [
+                    {"text": "🗓简报设置", "callback_data": "menu:settings"},
+                    {"text": "🖼封面管理", "callback_data": "menu:cover"},
+                ],
+            ],
         )
+
+    def test_start_uses_wide_two_column_control_panel(self):
+        self.make_service()
+
+        self.service.handle_update({
+            "update_id": 302,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "text": "/start",
+            },
+        })
+
+        text = self.api.sent[0][1]
+        self.assertIn("🧭SlowLink Assistant控制面板", text)
+        self.assertIn(f"版本：V{__version__}", text)
+        self.assertIn("模式：频道消息助手", text)
+        self.assertIn("状态：正常运行", text)
+        self.assertIn("点击下方按钮进入对应功能", text)
+        repository_version = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
+        self.assertEqual(__version__, repository_version)
+        keyboard = self.api.sent_reply_markups[0]["inline_keyboard"]
+        self.assertEqual([len(row) for row in keyboard], [2, 2, 2])
 
     def test_private_panel_edits_one_message_and_returns_home(self):
         self.make_service()
