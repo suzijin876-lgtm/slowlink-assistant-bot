@@ -50,6 +50,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.report_chat_id, "-1009")
         self.assertEqual(config.source_channel_refs, frozenset({"-1001", "@source"}))
 
+    def test_optional_report_channel_is_normalized_for_api_use(self):
+        env = self.valid_env()
+        env["REPORT_CHANNEL_ID"] = "ReportsChannel"
+
+        config = BotConfig.load(env=env, env_file=None)
+
+        self.assertEqual(config.report_channel_id, "@reportschannel")
+        self.assertEqual(config.report_channel_id_for_api, "@reportschannel")
+
+    def test_report_channel_is_optional(self):
+        config = BotConfig.load(env=self.valid_env(), env_file=None)
+
+        self.assertIsNone(config.report_channel_id)
+        self.assertIsNone(config.report_channel_id_for_api)
+
     def test_missing_required_config_raises_clear_error(self):
         with self.assertRaises(ConfigError) as ctx:
             BotConfig.load(env={}, env_file=None)

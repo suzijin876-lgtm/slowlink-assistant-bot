@@ -72,6 +72,17 @@ class EventStore:
             )
             self._conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS report_deliveries (
+                    period_type TEXT NOT NULL,
+                    period_key TEXT NOT NULL,
+                    destination_key TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    PRIMARY KEY (period_type, period_key, destination_key)
+                )
+                """
+            )
+            self._conn.execute(
+                """
                 CREATE TABLE IF NOT EXISTS report_snapshots (
                     period_type TEXT NOT NULL,
                     period_key TEXT NOT NULL,
@@ -655,6 +666,46 @@ class EventStore:
             self._conn.execute(
                 "INSERT OR IGNORE INTO sent_reports (period_type, period_key, sent_at) VALUES (?, ?, ?)",
                 (period_type, period_key, at.isoformat()),
+            )
+
+    def was_report_delivered(self, period_type: str, period_key: str, destination_key: str) -> bool:
+        with self._lock:
+            exact = self._conn.execute(
+                """
+                SELECT 1 FROM report_deliveries
+                WHERE period_type = ? AND period_key = ? AND destination_key = ?
+                """,
+                (str(period_type), str(period_key), str(destination_key)),
+            ).fetchone()
+            if exact is not None:
+                return True
+            any_delivery = self._conn.execute(
+                "SELECT 1 FROM report_deliveries WHERE period_type = ? AND period_key = ? LIMIT 1",
+                (str(period_type), str(period_key)),
+            ).fetchone()
+            if any_delivery is not None:
+                return False
+            legacy = self._conn.execute(
+                "SELECT 1 FROM sent_reports WHERE period_type = ? AND period_key = ?",
+                (str(period_type), str(period_key)),
+            ).fetchone()
+        return legacy is not None
+
+    def mark_report_delivered(
+        self,
+        period_type: str,
+        period_key: str,
+        destination_key: str,
+        at: datetime,
+    ) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO report_deliveries (
+                    period_type, period_key, destination_key, sent_at
+                ) VALUES (?, ?, ?, ?)
+                """,
+                (str(period_type), str(period_key), str(destination_key), at.isoformat()),
             )
 
     def get_report_snapshot(self, period_type: str, period_key: str) -> dict | None:

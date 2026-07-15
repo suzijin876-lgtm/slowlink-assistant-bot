@@ -79,6 +79,29 @@ prompt_keep() {
   fi
 }
 
+prompt_optional() {
+  prompt=$1
+  printf '%s' "$prompt" > /dev/tty
+  value=""
+  IFS= read -r value < /dev/tty || value=""
+  printf '%s' "$value"
+}
+
+prompt_keep_optional() {
+  prompt=$1
+  current=$2
+  printf '%s' "$prompt" > /dev/tty
+  value=""
+  IFS= read -r value < /dev/tty || value=""
+  if [ "$value" = "0" ]; then
+    printf ''
+  elif [ -n "$value" ]; then
+    printf '%s' "$value"
+  else
+    printf '%s' "$current"
+  fi
+}
+
 read_env_value() {
   key=$1
   env_path=$2
@@ -96,6 +119,7 @@ validate_config_values() {
   case "$OWNER_USER_ID_VALUE" in ''|*[!0-9]*) die "OWNER_USER_ID必须是正整数" ;; esac
   [ "$OWNER_USER_ID_VALUE" -gt 0 ] || die "OWNER_USER_ID必须大于0"
   is_chat_ref "$REPORT_CHAT_ID_VALUE" || die "报表群ID格式不正确：请填写负数群ID或群用户名"
+  [ -z "$REPORT_CHANNEL_ID_VALUE" ] || is_chat_ref "$REPORT_CHANNEL_ID_VALUE" || die "简报频道ID格式不正确：请填写负数频道ID或频道用户名"
   validate_source_refs "$SOURCE_CHANNEL_IDS_VALUE" || die "源频道ID格式不正确：请填写负数频道ID或频道用户名，多个用英文逗号分隔"
 }
 
@@ -106,6 +130,7 @@ write_new_env() {
 BOT_TOKEN=$BOT_TOKEN_VALUE
 OWNER_USER_ID=$OWNER_USER_ID_VALUE
 REPORT_CHAT_ID=$REPORT_CHAT_ID_VALUE
+REPORT_CHANNEL_ID=$REPORT_CHANNEL_ID_VALUE
 SOURCE_CHANNEL_IDS=$SOURCE_CHANNEL_IDS_VALUE
 DATA_PATH=data/assistant.sqlite3
 TIMEZONE=Asia/Shanghai
@@ -125,6 +150,7 @@ write_updated_env() {
   seen_token=0
   seen_owner=0
   seen_report=0
+  seen_report_channel=0
   seen_sources=0
   umask 077
   : > "$output"
@@ -142,6 +168,10 @@ write_updated_env() {
         printf 'REPORT_CHAT_ID=%s\n' "$REPORT_CHAT_ID_VALUE" >> "$output"
         seen_report=1
         ;;
+      REPORT_CHANNEL_ID=*)
+        printf 'REPORT_CHANNEL_ID=%s\n' "$REPORT_CHANNEL_ID_VALUE" >> "$output"
+        seen_report_channel=1
+        ;;
       SOURCE_CHANNEL_IDS=*)
         printf 'SOURCE_CHANNEL_IDS=%s\n' "$SOURCE_CHANNEL_IDS_VALUE" >> "$output"
         seen_sources=1
@@ -154,6 +184,7 @@ write_updated_env() {
   [ "$seen_token" -eq 1 ] || printf 'BOT_TOKEN=%s\n' "$BOT_TOKEN_VALUE" >> "$output"
   [ "$seen_owner" -eq 1 ] || printf 'OWNER_USER_ID=%s\n' "$OWNER_USER_ID_VALUE" >> "$output"
   [ "$seen_report" -eq 1 ] || printf 'REPORT_CHAT_ID=%s\n' "$REPORT_CHAT_ID_VALUE" >> "$output"
+  [ "$seen_report_channel" -eq 1 ] || printf 'REPORT_CHANNEL_ID=%s\n' "$REPORT_CHANNEL_ID_VALUE" >> "$output"
   [ "$seen_sources" -eq 1 ] || printf 'SOURCE_CHANNEL_IDS=%s\n' "$SOURCE_CHANNEL_IDS_VALUE" >> "$output"
   chmod 600 "$output"
 }
@@ -189,21 +220,25 @@ configure_existing() {
   OLD_BOT_TOKEN=$(read_env_value BOT_TOKEN "$ENV_PATH")
   OLD_OWNER_USER_ID=$(read_env_value OWNER_USER_ID "$ENV_PATH")
   OLD_REPORT_CHAT_ID=$(read_env_value REPORT_CHAT_ID "$ENV_PATH")
+  OLD_REPORT_CHANNEL_ID=$(read_env_value REPORT_CHANNEL_ID "$ENV_PATH")
   OLD_SOURCE_CHANNEL_IDS=$(read_env_value SOURCE_CHANNEL_IDS "$ENV_PATH")
   [ -n "$OLD_BOT_TOKEN" ] || die "现有配置缺少BOT_TOKEN"
   [ -n "$OLD_OWNER_USER_ID" ] || die "现有配置缺少OWNER_USER_ID"
   [ -n "$OLD_REPORT_CHAT_ID" ] || die "现有配置缺少REPORT_CHAT_ID"
   [ -n "$OLD_SOURCE_CHANNEL_IDS" ] || die "现有配置缺少SOURCE_CHANNEL_IDS"
 
-  BOT_TOKEN_VALUE=$(prompt_keep '[1/4]机器人Token（已配置，直接回车保留；输入新Token则替换）
+  BOT_TOKEN_VALUE=$(prompt_keep '[1/5]机器人Token（已配置，直接回车保留；输入新Token则替换）
 请输入：' "$OLD_BOT_TOKEN")
-  OWNER_USER_ID_VALUE=$(prompt_keep "[2/4]主人用户ID
+  OWNER_USER_ID_VALUE=$(prompt_keep "[2/5]主人用户ID
 当前：$OLD_OWNER_USER_ID
 直接回车保留，或输入新值：" "$OLD_OWNER_USER_ID")
-  REPORT_CHAT_ID_VALUE=$(prompt_keep "[3/4]报表群ID
+  REPORT_CHAT_ID_VALUE=$(prompt_keep "[3/5]报表群ID
 当前：$OLD_REPORT_CHAT_ID
 直接回车保留，或输入新值：" "$OLD_REPORT_CHAT_ID")
-  SOURCE_CHANNEL_IDS_VALUE=$(prompt_keep "[4/4]源频道ID
+  REPORT_CHANNEL_ID_VALUE=$(prompt_keep_optional "[4/5]简报频道ID（可选）
+当前：${OLD_REPORT_CHANNEL_ID:-未配置}
+直接回车保留，输入新值替换，输入0停用：" "$OLD_REPORT_CHANNEL_ID")
+  SOURCE_CHANNEL_IDS_VALUE=$(prompt_keep "[5/5]源频道ID
 当前：$OLD_SOURCE_CHANNEL_IDS
 直接回车保留，或输入新值：" "$OLD_SOURCE_CHANNEL_IDS")
   validate_config_values
@@ -215,8 +250,8 @@ configure_existing() {
   log "应用新配置并重建Assistant Bot"
   if docker compose up -d --no-deps --force-recreate assistant_bot && wait_for_health; then
     log "配置修改完成"
-    printf 'Token：已配置\n主人用户ID：%s\n报表群：%s\n源频道：%s\n' \
-      "$OWNER_USER_ID_VALUE" "$REPORT_CHAT_ID_VALUE" "$SOURCE_CHANNEL_IDS_VALUE"
+    printf 'Token：已配置\n主人用户ID：%s\n报表群：%s\n简报频道：%s\n源频道：%s\n' \
+      "$OWNER_USER_ID_VALUE" "$REPORT_CHAT_ID_VALUE" "${REPORT_CHANNEL_ID_VALUE:-未配置}" "$SOURCE_CHANNEL_IDS_VALUE"
     return 0
   fi
 
@@ -231,7 +266,7 @@ configure_existing() {
 
 usage() {
   cat <<'EOF'
-用法：sudo sh install.sh [--version 0.1.25] [--update]
+用法：sudo sh install.sh [--version X.Y.Z] [--update]
 
   --version VERSION  安装指定版本，默认安装GitHub最新稳定版
   --update           保留现有.env和data并更新程序
@@ -450,16 +485,19 @@ fi
 
 ENV_FILE="$TMP_DIR/new.env"
 if [ "$KEEP_ENV" -eq 0 ]; then
-  BOT_TOKEN_VALUE=${BOT_TOKEN:-$(prompt_value '[1/4]机器人Token
+  BOT_TOKEN_VALUE=${BOT_TOKEN:-$(prompt_value '[1/5]机器人Token
 从@BotFather获取；输入内容会显示，例如123456789:AAExampleToken。
 请输入：')}
-  OWNER_USER_ID_VALUE=${OWNER_USER_ID:-$(prompt_value '[2/4]主人用户ID
+  OWNER_USER_ID_VALUE=${OWNER_USER_ID:-$(prompt_value '[2/5]主人用户ID
 填写你自己的Telegram数字ID，例如123456789。
 请输入：')}
-  REPORT_CHAT_ID_VALUE=${REPORT_CHAT_ID:-$(prompt_value '[3/4]报表群ID
+  REPORT_CHAT_ID_VALUE=${REPORT_CHAT_ID:-$(prompt_value '[3/5]报表群ID
 填写接收日报、周报和月报的群ID，通常以-100开头。
 请输入：')}
-  SOURCE_CHANNEL_IDS_VALUE=${SOURCE_CHANNEL_IDS:-$(prompt_value '[4/4]源频道ID
+  REPORT_CHANNEL_ID_VALUE=${REPORT_CHANNEL_ID:-$(prompt_optional '[4/5]简报频道ID（可选）
+填写同步全部简报并自动置顶的频道ID；直接回车则不向频道发送简报。
+请输入：')}
+  SOURCE_CHANNEL_IDS_VALUE=${SOURCE_CHANNEL_IDS:-$(prompt_value '[5/5]源频道ID
 填写Bot需要监听的频道ID，通常以-100开头；多个用英文逗号分隔。
 请输入：')}
   validate_config_values

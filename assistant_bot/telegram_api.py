@@ -77,6 +77,9 @@ class TelegramAPI:
     def get_me(self):
         return self._request("getMe", {}, timeout=20)
 
+    def set_my_commands(self, commands: list[dict[str, str]]):
+        return self._request("setMyCommands", {"commands": commands}, timeout=20)
+
     def get_updates(self, offset: int | None, timeout: int, allowed_updates: list[str]):
         payload: dict[str, Any] = {"timeout": int(timeout), "allowed_updates": allowed_updates}
         if offset is not None:

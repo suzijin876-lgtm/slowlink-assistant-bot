@@ -37,7 +37,8 @@ class MainLoggingTests(unittest.TestCase):
     def test_expected_poll_error_logs_one_warning_without_traceback(self):
         source = inspect.getsource(main_module.main)
 
-        self.assertEqual(source.count("except TelegramAPIError as exc:"), 2)
+        self.assertEqual(source.count("except TelegramAPIError as exc:"), 3)
+        self.assertIn('log.warning("按钮入口设置失败，Bot继续运行：%s", exc)', source)
         self.assertIn('log.warning("Telegram 轮询异常：%s，5秒后重试", exc)', source)
         self.assertLess(
             source.rindex("except TelegramAPIError as exc:"),

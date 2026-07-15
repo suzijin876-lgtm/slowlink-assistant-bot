@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -151,6 +152,18 @@ class AssistantServiceTests(unittest.TestCase):
         self.service = AssistantService(make_config(), self.api, self.store, clock=lambda: datetime(2026, 7, 10, 12, 0, tzinfo=TZ))
         self.service.started_at = datetime(2026, 7, 10, 9, 30, tzinfo=TZ)
 
+    def make_service_with_report_channel(self):
+        self.api = FakeAPI()
+        self.store = EventStore(":memory:")
+        config = replace(make_config(), report_channel_id="-1008")
+        self.service = AssistantService(
+            config,
+            self.api,
+            self.store,
+            clock=lambda: datetime(2026, 7, 10, 12, 0, tzinfo=TZ),
+        )
+        self.service.started_at = datetime(2026, 7, 10, 9, 30, tzinfo=TZ)
+
     def send_source_post(self, message_id=55, at=None):
         at = at or datetime(2026, 7, 10, 12, 0, tzinfo=TZ)
         self.service.handle_update({
@@ -175,6 +188,29 @@ class AssistantServiceTests(unittest.TestCase):
                     "message_id": copied_message_id,
                     "chat": {"id": 42, "type": "private"},
                 },
+            },
+        })
+
+    def send_callback(
+        self,
+        data,
+        *,
+        user_id=42,
+        chat_id=42,
+        chat_type="private",
+        message_id=500,
+        update_id=2000,
+    ):
+        self.service.handle_update({
+            "update_id": update_id,
+            "callback_query": {
+                "id": f"callback-{update_id}",
+                "from": {"id": user_id},
+                "message": {
+                    "message_id": message_id,
+                    "chat": {"id": chat_id, "type": chat_type},
+                },
+                "data": data,
             },
         })
 
@@ -837,6 +873,141 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertNotIn("T", self.api.sent[0][1])
         self.assertNotIn("+08:00", self.api.sent[0][1])
 
+    def test_start_opens_private_button_panel_without_command_list(self):
+        self.make_service()
+
+        self.service.handle_update({
+            "update_id": 300,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "text": "/start",
+            },
+        })
+
+        self.assertIn("SlowLink Assistant", self.api.sent[0][1])
+        self.assertNotIn("/status", self.api.sent[0][1])
+        keyboard = self.api.sent_reply_markups[0]["inline_keyboard"]
+        labels = [button["text"] for row in keyboard for button in row]
+        self.assertEqual(
+            labels,
+            ["📊当前报告", "✅运行状态", "🧾最近记录", "🩺系统自检", "🗓简报设置", "🖼封面管理"],
+        )
+
+    def test_private_panel_edits_one_message_and_returns_home(self):
+        self.make_service()
+
+        self.send_callback("menu:status")
+
+        self.assertEqual(self.api.sent, [])
+        self.assertIn("运行状态", self.api.edited[-1][2])
+        labels = [
+            button["text"]
+            for row in self.api.edited[-1][3]["inline_keyboard"]
+            for button in row
+        ]
+        self.assertEqual(labels, ["🔄刷新", "↩返回主面板"])
+        self.assertEqual(self.api.answered_callbacks[-1][0], "callback-2000")
+
+        self.send_callback("menu:home", update_id=2001)
+
+        self.assertIn("SlowLink Assistant", self.api.edited[-1][2])
+        self.assertIn("📊当前报告", [button["text"] for row in self.api.edited[-1][3]["inline_keyboard"] for button in row])
+
+    def test_report_group_uses_owner_only_current_report_button(self):
+        self.make_service()
+        group = {"id": -1009, "type": "supergroup", "title": "Report Group"}
+        self.service.handle_update({
+            "update_id": 301,
+            "message": {
+                "message_id": 1,
+                "chat": group,
+                "from": {"id": 42},
+                "text": "/start",
+            },
+        })
+
+        keyboard = self.api.sent_reply_markups[0]["inline_keyboard"]
+        self.assertEqual(keyboard, [[{"text": "📊当前报告", "callback_data": "group:report"}]])
+
+        self.send_callback("group:report", chat_id=-1009, chat_type="supergroup", update_id=2002)
+        self.assertIn("当前概览", self.api.edited[-1][2])
+
+        edit_count = len(self.api.edited)
+        self.send_callback(
+            "group:report",
+            user_id=99,
+            chat_id=-1009,
+            chat_type="supergroup",
+            update_id=2003,
+        )
+        self.assertEqual(len(self.api.edited), edit_count)
+        self.assertEqual(self.api.answered_callbacks[-1][1], "无权限")
+
+    def test_report_settings_toggle_group_daily_without_disabling_channel_daily(self):
+        self.make_service_with_report_channel()
+
+        self.send_callback("menu:settings")
+        rows = self.api.edited[-1][3]["inline_keyboard"]
+        self.assertEqual([len(row) for row in rows], [2, 2, 2, 1])
+        labels = [button["text"] for row in rows for button in row]
+        self.assertIn("群·日报✅", labels)
+        self.assertIn("频道·日报✅", labels)
+
+        self.send_callback("settings:group:daily", update_id=2004)
+
+        self.assertEqual(self.store.get_state("report_enabled:group:daily"), "0")
+        labels = [button["text"] for row in self.api.edited[-1][3]["inline_keyboard"] for button in row]
+        self.assertIn("群·日报❌", labels)
+        self.assertIn("频道·日报✅", labels)
+
+        now = datetime(2026, 7, 10, 0, 0, tzinfo=TZ)
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 7, 8, 0, 0, tzinfo=TZ).isoformat())
+        self.service.run_due_reports(now)
+
+        report_targets = [item[0] for item in self.api.sent if item[0] in {-1009, -1008}]
+        self.assertEqual(report_targets, [-1008])
+        self.assertEqual(self.api.pinned, [(-1008, 101, True)])
+        self.assertTrue(self.store.was_report_sent("daily", scheduled_period("daily", now).key))
+
+    def test_combined_report_respects_different_group_and_channel_switches(self):
+        self.make_service_with_report_channel()
+        self.store.set_state("report_enabled:group:daily", "0")
+        now = datetime(2026, 7, 13, 0, 0, tzinfo=TZ)
+
+        self.service.run_due_reports(now)
+
+        reports = {chat_id: text for chat_id, text, _ in self.api.sent if chat_id in {-1009, -1008}}
+        self.assertIn("📊上周周报", reports[-1009])
+        self.assertNotIn("昨日（", reports[-1009])
+        self.assertIn("📊周期简报", reports[-1008])
+        self.assertIn("昨日（", reports[-1008])
+        self.assertIn("上周（", reports[-1008])
+
+    def test_cover_panel_accepts_next_owner_photo_without_caption_command(self):
+        self.make_service()
+
+        self.send_callback("menu:cover")
+        self.send_callback("cover:upload", update_id=2005)
+        self.assertIn("直接发送一张图片", self.api.edited[-1][2])
+
+        self.service.handle_update({
+            "update_id": 302,
+            "message": {
+                "message_id": 2,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "photo": [
+                    {"file_id": "small", "width": 320, "height": 180, "file_size": 100},
+                    {"file_id": "cover-from-panel", "width": 1280, "height": 720, "file_size": 1000},
+                ],
+            },
+        })
+
+        self.assertEqual(self.store.get_state("scheduled_report_cover_file_id"), "cover-from-panel")
+        self.assertEqual(self.api.photo_attempts[-1][0:2], (42, "cover-from-panel"))
+
     def test_report_command_sends_single_current_report(self):
         self.make_service()
         self.store.record_copy_success("-1001", "Source", 1, "42", 9, datetime(2026, 7, 10, 1, 0, tzinfo=TZ))
@@ -961,8 +1132,9 @@ class AssistantServiceTests(unittest.TestCase):
         self.make_service()
 
         help_text = self.service.help_text()
-        self.assertIn("/report", help_text)
-        self.assertIn("/check", help_text)
+        self.assertNotIn("/report", help_text)
+        self.assertNotIn("/check", help_text)
+        self.assertIn("SlowLink Assistant", help_text)
         self.assertNotIn("/daily", help_text)
         self.assertNotIn("/weekly", help_text)
         self.assertNotIn("/monthly", help_text)
@@ -979,7 +1151,8 @@ class AssistantServiceTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.api.sent), 1)
-        self.assertIn("未知命令", self.api.sent[0][1])
+        self.assertIn("SlowLink Assistant", self.api.sent[0][1])
+        self.assertIsNotNone(self.api.sent_reply_markups[0])
 
     def test_owner_can_set_replace_query_and_disable_scheduled_report_cover(self):
         self.make_service()
@@ -1027,7 +1200,8 @@ class AssistantServiceTests(unittest.TestCase):
                 "text": "/cover",
             },
         })
-        self.assertIn("简报封面：已启用", self.api.sent[-1][1])
+        self.assertIn("封面管理", self.api.sent[-1][1])
+        self.assertIn("状态：已启用", self.api.sent[-1][1])
 
         self.service.handle_update({
             "update_id": 204,
@@ -1039,7 +1213,7 @@ class AssistantServiceTests(unittest.TestCase):
             },
         })
         self.assertIsNone(self.store.get_state("scheduled_report_cover_file_id"))
-        self.assertIn("简报封面已停用", self.api.sent[-1][1])
+        self.assertIn("状态：未设置", self.api.sent[-1][1])
 
     def test_non_owner_cannot_change_scheduled_report_cover(self):
         self.make_service()
@@ -1114,7 +1288,7 @@ class AssistantServiceTests(unittest.TestCase):
         })
 
         self.assertEqual(len(self.api.sent), 1)
-        self.assertIn("未知命令", self.api.sent[0][1])
+        self.assertIn("SlowLink Assistant", self.api.sent[0][1])
         self.assertNotIn("42", self.api.sent[0][1])
 
     def test_unauthorized_group_is_left(self):
@@ -1134,6 +1308,19 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertEqual(self.api.sent[0][0], 42)
         self.assertIn("已退出未授权群", self.api.sent[0][1])
         self.assertIn("Bad Group", self.api.sent[0][1])
+
+    def test_configured_report_channel_is_not_left_when_it_is_not_a_source(self):
+        self.make_service_with_report_channel()
+
+        self.service.handle_update({
+            "update_id": 6,
+            "my_chat_member": {
+                "chat": {"id": -1008, "type": "channel", "title": "Reports"},
+                "new_chat_member": {"status": "administrator"},
+            },
+        })
+
+        self.assertEqual(self.api.left, [])
 
     def test_unauthorized_group_notice_is_rate_limited_per_chat(self):
         self.make_service()
@@ -1203,6 +1390,53 @@ class AssistantServiceTests(unittest.TestCase):
         logs = "\n".join(captured.output)
         self.assertIn("日报发送完成：日期=2026-07-09 转发=1条 异常=0次 纠错删除=1条", logs)
         self.assertNotIn("类型=daily", logs)
+
+    def test_all_combined_reports_use_same_cover_and_pin_in_group_and_channel(self):
+        self.make_service_with_report_channel()
+        self.store.set_state("scheduled_report_cover_file_id", "cover-file-id")
+        self.store.set_state("last_report_pin_message_id", "77")
+        self.store.set_state("last_report_channel_pin_message_id", "88")
+        now = datetime(2026, 6, 1, 0, 0, tzinfo=TZ)
+
+        self.service.run_due_reports(now)
+
+        self.assertEqual([item[0] for item in self.api.photos], [-1009, -1008])
+        self.assertEqual(self.api.photos[0][1:], self.api.photos[1][1:])
+        caption = self.api.photos[0][2]
+        self.assertIn("昨日（", caption)
+        self.assertIn("上周（", caption)
+        self.assertIn("上月（", caption)
+        self.assertEqual(self.api.pinned, [(-1009, 101, True), (-1008, 102, True)])
+        self.assertEqual(self.api.unpinned, [(-1009, 77), (-1008, 88)])
+        self.assertEqual(self.store.get_state("last_report_pin_message_id"), "101")
+        self.assertEqual(self.store.get_state("last_report_channel_pin_message_id"), "102")
+        for kind in ("daily", "weekly", "monthly"):
+            period = scheduled_period(kind, now)
+            self.assertTrue(self.store.was_report_delivered(kind, period.key, "group:-1009"))
+            self.assertTrue(self.store.was_report_delivered(kind, period.key, "channel:-1008"))
+            self.assertTrue(self.store.was_report_sent(kind, period.key))
+
+    def test_failed_channel_delivery_retries_without_duplicate_group_report(self):
+        self.make_service_with_report_channel()
+        self.store.set_state("statistics_coverage_started_at", datetime(2026, 7, 8, 0, 0, tzinfo=TZ).isoformat())
+        now = datetime(2026, 7, 10, 0, 0, tzinfo=TZ)
+        period = scheduled_period("daily", now)
+        self.api.fail_send_for_chats.add(-1008)
+
+        self.service.run_due_reports(now)
+
+        self.assertTrue(self.store.was_report_delivered("daily", period.key, "group:-1009"))
+        self.assertFalse(self.store.was_report_delivered("daily", period.key, "channel:-1008"))
+        self.assertFalse(self.store.was_report_sent("daily", period.key))
+
+        self.api.fail_send_for_chats.clear()
+        self.service.run_due_reports(now + timedelta(minutes=1))
+
+        report_messages = [item for item in self.api.sent if item[0] in {-1009, -1008}]
+        self.assertEqual([item[0] for item in report_messages], [-1009, -1008])
+        self.assertEqual(report_messages[0][1], report_messages[1][1])
+        self.assertTrue(self.store.was_report_delivered("daily", period.key, "channel:-1008"))
+        self.assertTrue(self.store.was_report_sent("daily", period.key))
 
     def test_scheduled_daily_report_catches_up_after_exact_minute(self):
         self.make_service()
@@ -1484,6 +1718,25 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("最近：01:00", text)
         self.assertNotIn(" / ", text)
         self.assertNotIn(" 个", text)
+
+    def test_status_reports_channel_post_and_pin_permission(self):
+        self.make_service_with_report_channel()
+
+        text = self.service.status_text()
+
+        self.assertIn("简报频道：已配置", text)
+        self.assertEqual(self.api.get_chat_member_calls, [(-1009, 777), (-1008, 777)])
+
+        self.api.get_chat_member_calls.clear()
+        self.api.chat_member = {
+            "status": "administrator",
+            "can_post_messages": True,
+            "can_edit_messages": False,
+        }
+
+        text = self.service.check_text()
+
+        self.assertIn("简报频道：异常", text)
 
     def test_check_command_reports_watchdog_status_from_status_file(self):
         temp_dir = tempfile.TemporaryDirectory()

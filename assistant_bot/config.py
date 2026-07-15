@@ -118,6 +118,7 @@ class BotConfig:
     owner_user_id: int
     report_chat_id: str
     source_channel_refs: frozenset[str]
+    report_channel_id: str | None = None
     data_path: str = "data/assistant.sqlite3"
     timezone: str = "Asia/Shanghai"
     poll_timeout: int = 25
@@ -143,6 +144,8 @@ class BotConfig:
         if not report_chat_id:
             raise ConfigError("缺少配置：REPORT_CHAT_ID")
         report_chat_id = normalize_chat_ref(report_chat_id)
+        report_channel_value = str(values.get("REPORT_CHANNEL_ID") or "").strip()
+        report_channel_id = normalize_chat_ref(report_channel_value) if report_channel_value else None
         source_channel_refs = parse_chat_refs(str(values.get("SOURCE_CHANNEL_IDS") or ""))
         if not source_channel_refs:
             raise ConfigError("缺少配置：SOURCE_CHANNEL_IDS")
@@ -162,6 +165,7 @@ class BotConfig:
             owner_user_id=owner_user_id,
             report_chat_id=report_chat_id,
             source_channel_refs=source_channel_refs,
+            report_channel_id=report_channel_id,
             data_path=str(values.get("DATA_PATH") or "data/assistant.sqlite3"),
             timezone=timezone,
             poll_timeout=_bounded_int(values, "POLL_TIMEOUT", 25, 1, 50),
@@ -175,3 +179,9 @@ class BotConfig:
     @property
     def report_chat_id_for_api(self):
         return chat_ref_for_api(self.report_chat_id)
+
+    @property
+    def report_channel_id_for_api(self):
+        if self.report_channel_id is None:
+            return None
+        return chat_ref_for_api(self.report_channel_id)

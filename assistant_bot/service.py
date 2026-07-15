@@ -9,6 +9,21 @@ from zoneinfo import ZoneInfo
 
 from . import __version__
 from .config import BotConfig, chat_ref_for_api, chat_username_ref, normalize_chat_ref
+from .menu import (
+    REPORT_DESTINATION_LABELS,
+    REPORT_KIND_LABELS,
+    cover_panel_keyboard,
+    cover_panel_text,
+    cover_upload_keyboard,
+    cover_upload_text,
+    detail_keyboard,
+    group_menu_keyboard,
+    group_report_keyboard,
+    main_menu_keyboard,
+    main_menu_text,
+    report_settings_keyboard,
+    report_settings_text,
+)
 from .reports import (
     Period,
     format_compact_report,
@@ -33,8 +48,10 @@ EVENT_RETENTION_DAYS = 90
 UNAUTHORIZED_CHAT_NOTICE_INTERVAL = timedelta(hours=1)
 WATCHDOG_STATUS_MAX_AGE = timedelta(seconds=120)
 LAST_REPORT_PIN_STATE_KEY = "last_report_pin_message_id"
+LAST_REPORT_CHANNEL_PIN_STATE_KEY = "last_report_channel_pin_message_id"
 REPORT_COVER_STATE_KEY = "scheduled_report_cover_file_id"
 PHOTO_CAPTION_LIMIT = 1024
+COVER_UPLOAD_TIMEOUT = timedelta(minutes=10)
 MODERATION_MIN_DOWNVOTES = 2
 MODERATION_MIN_POOPS = 2
 MODERATION_DELETE_DELAY = timedelta(minutes=1)
@@ -73,6 +90,7 @@ class AssistantService:
         self.unauthorized_chat_notice_times: dict[str, datetime] = {}
         self.last_cleanup_date: date | None = None
         self.last_backup_date: date | None = None
+        self.cover_upload_deadline: datetime | None = None
 
     def _now(self) -> datetime:
         now = self.clock()
@@ -258,7 +276,21 @@ class AssistantService:
         if user_id != self.config.owner_user_id:
             self._answer_callback(callback_id, "无权限", show_alert=True)
             return
-        parts = str(query.get("data") or "").split(":")
+        data = str(query.get("data") or "")
+        if data.startswith("menu:"):
+            self._handle_menu_callback(query, data)
+            return
+        if data.startswith("settings:"):
+            self._handle_report_settings_callback(query, data)
+            return
+        if data.startswith("cover:"):
+            self._handle_cover_panel_callback(query, data)
+            return
+        if data.startswith("group:"):
+            self._handle_group_panel_callback(query, data)
+            return
+
+        parts = data.split(":")
         if len(parts) != 4 or parts[0] != "mod" or parts[1] not in {"keep", "delete"}:
             self._answer_callback(callback_id, "操作无效", show_alert=True)
             return
@@ -288,6 +320,154 @@ class AssistantService:
 
         deleted = self._delete_moderation_post(post, "owner", now)
         self._answer_callback(callback_id, "已删除" if deleted else "删除失败", show_alert=not deleted)
+
+    def _handle_menu_callback(self, query: dict[str, Any], data: str) -> None:
+        callback_id = str(query.get("id") or "")
+        if not self._callback_is_private(query):
+            self._answer_callback(callback_id, "操作无效", show_alert=True)
+            return
+        action = data.split(":", 1)[1]
+        if action == "home":
+            self.cover_upload_deadline = None
+            text, keyboard = main_menu_text(), main_menu_keyboard()
+        elif action == "report":
+            text, keyboard = self.current_report_text(), detail_keyboard("menu:report")
+        elif action == "status":
+            text, keyboard = self.status_text(), detail_keyboard("menu:status")
+        elif action == "recent":
+            text, keyboard = self.recent_text(), detail_keyboard("menu:recent")
+        elif action == "check":
+            text, keyboard = self.check_text(), detail_keyboard("menu:check")
+        elif action == "settings":
+            text, keyboard = self._report_settings_view()
+        elif action == "cover":
+            enabled = bool(self.store.get_state(REPORT_COVER_STATE_KEY))
+            text, keyboard = cover_panel_text(enabled), cover_panel_keyboard(enabled)
+        else:
+            self._answer_callback(callback_id, "操作无效", show_alert=True)
+            return
+        self._edit_callback_panel(query, text, keyboard)
+        self._answer_callback(callback_id, "已刷新" if action not in {"home", "settings", "cover"} else "")
+
+    def _handle_report_settings_callback(self, query: dict[str, Any], data: str) -> None:
+        callback_id = str(query.get("id") or "")
+        if not self._callback_is_private(query):
+            self._answer_callback(callback_id, "操作无效", show_alert=True)
+            return
+        parts = data.split(":")
+        if (
+            len(parts) != 3
+            or parts[1] not in REPORT_DESTINATION_LABELS
+            or parts[2] not in REPORT_KIND_LABELS
+        ):
+            self._answer_callback(callback_id, "操作无效", show_alert=True)
+            return
+        role, kind = parts[1], parts[2]
+        if role == "channel" and not self.config.report_channel_id:
+            self._answer_callback(callback_id, "简报频道未配置", show_alert=True)
+            return
+        enabled = not self._report_kind_enabled(role, kind)
+        self.store.set_state(self._report_enabled_state_key(role, kind), "1" if enabled else "0")
+        text, keyboard = self._report_settings_view()
+        self._edit_callback_panel(query, text, keyboard)
+        self._answer_callback(
+            callback_id,
+            f"{REPORT_DESTINATION_LABELS[role]}{REPORT_KIND_LABELS[kind]}已{'开启' if enabled else '关闭'}",
+        )
+
+    def _handle_cover_panel_callback(self, query: dict[str, Any], data: str) -> None:
+        callback_id = str(query.get("id") or "")
+        if not self._callback_is_private(query):
+            self._answer_callback(callback_id, "操作无效", show_alert=True)
+            return
+        action = data.split(":", 1)[1]
+        if action == "upload":
+            self.cover_upload_deadline = self._now() + COVER_UPLOAD_TIMEOUT
+            self._edit_callback_panel(query, cover_upload_text(), cover_upload_keyboard())
+            self._answer_callback(callback_id, "等待图片")
+            return
+        if action == "cancel":
+            self.cover_upload_deadline = None
+            enabled = bool(self.store.get_state(REPORT_COVER_STATE_KEY))
+            self._edit_callback_panel(query, cover_panel_text(enabled), cover_panel_keyboard(enabled))
+            self._answer_callback(callback_id, "已取消")
+            return
+        if action == "off":
+            self.cover_upload_deadline = None
+            self.store.delete_state(REPORT_COVER_STATE_KEY)
+            self._edit_callback_panel(query, cover_panel_text(False), cover_panel_keyboard(False))
+            self._answer_callback(callback_id, "封面已停用")
+            LOG.info("简报封面已停用")
+            return
+        if action == "preview":
+            cover = self.store.get_state(REPORT_COVER_STATE_KEY)
+            if not cover:
+                self._answer_callback(callback_id, "尚未设置封面", show_alert=True)
+                return
+            try:
+                self.api.send_photo(self.config.owner_user_id, cover, self._cover_preview_text())
+            except Exception as exc:
+                LOG.warning("简报封面预览发送失败：原因=%s", exc)
+                self._answer_callback(callback_id, "预览发送失败", show_alert=True)
+                return
+            self._answer_callback(callback_id, "预览已发送")
+            return
+        self._answer_callback(callback_id, "操作无效", show_alert=True)
+
+    def _handle_group_panel_callback(self, query: dict[str, Any], data: str) -> None:
+        callback_id = str(query.get("id") or "")
+        message = query.get("message") or {}
+        chat = message.get("chat") or {}
+        if normalize_chat_ref(chat) != self.config.report_chat_id:
+            self._answer_callback(callback_id, "操作无效", show_alert=True)
+            return
+        action = data.split(":", 1)[1]
+        if action == "report":
+            text, keyboard = self.current_report_text(include_diagnostics=False), group_report_keyboard()
+        elif action == "home":
+            text, keyboard = self.group_ready_text(), group_menu_keyboard()
+        else:
+            self._answer_callback(callback_id, "操作无效", show_alert=True)
+            return
+        self._edit_callback_panel(query, text, keyboard)
+        self._answer_callback(callback_id, "已刷新" if action == "report" else "")
+
+    def _callback_is_private(self, query: dict[str, Any]) -> bool:
+        message = query.get("message") or {}
+        return str((message.get("chat") or {}).get("type") or "") == "private"
+
+    def _edit_callback_panel(self, query: dict[str, Any], text: str, keyboard: dict) -> None:
+        message = query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat_ref_for_api(normalize_chat_ref(chat))
+        message_id = int(message.get("message_id") or 0)
+        if not chat_id or not message_id:
+            return
+        try:
+            self.api.edit_message_text(chat_id, message_id, text, reply_markup=keyboard)
+        except Exception as exc:
+            if "message is not modified" in str(exc).lower():
+                return
+            self.api.send_message(chat_id, text, disable_web_page_preview=True, reply_markup=keyboard)
+
+    @staticmethod
+    def _report_enabled_state_key(role: str, kind: str) -> str:
+        return f"report_enabled:{role}:{kind}"
+
+    def _report_kind_enabled(self, role: str, kind: str) -> bool:
+        return self.store.get_state(self._report_enabled_state_key(role, kind)) != "0"
+
+    def _report_settings_view(self) -> tuple[str, dict]:
+        enabled = {
+            (role, kind): self._report_kind_enabled(role, kind)
+            for role in REPORT_DESTINATION_LABELS
+            for kind in REPORT_KIND_LABELS
+        }
+        channel_configured = bool(self.config.report_channel_id)
+        return (
+            report_settings_text(enabled, channel_configured),
+            report_settings_keyboard(enabled, channel_configured),
+        )
 
     def _reaction_counts(self, reactions: list[dict]) -> tuple[int, int, int]:
         thumbs_up = 0
@@ -560,6 +740,11 @@ class AssistantService:
         if chat_type == "private":
             if user_id != self.config.owner_user_id:
                 return
+            if message.get("photo") and self.cover_upload_deadline is not None:
+                if self._now() <= self.cover_upload_deadline:
+                    self._save_cover_photo(message)
+                    return
+                self.cover_upload_deadline = None
             if text in OWNER_REPLY_DELETE_COMMANDS:
                 self._handle_owner_reply_action(message, text)
                 return
@@ -593,42 +778,48 @@ class AssistantService:
             self.store.delete_state(REPORT_COVER_STATE_KEY)
             self.api.send_message(
                 self.config.owner_user_id,
-                "✅简报封面已停用\n定时报表将恢复纯文字",
+                cover_panel_text(False),
+                reply_markup=cover_panel_keyboard(False),
             )
             LOG.info("简报封面已停用")
             return
 
         photos = [item for item in message.get("photo") or [] if item.get("file_id")]
         if photos:
-            selected = max(
-                photos,
-                key=lambda item: (
-                    int(item.get("file_size") or 0),
-                    int(item.get("width") or 0) * int(item.get("height") or 0),
-                ),
-            )
-            self.store.set_state(REPORT_COVER_STATE_KEY, str(selected["file_id"]))
-            try:
-                self.api.send_photo(
-                    self.config.owner_user_id,
-                    str(selected["file_id"]),
-                    self._cover_preview_text(),
-                )
-                LOG.info("简报封面已更新，私聊预览发送完成")
-            except Exception as exc:
-                LOG.warning("简报封面已更新，但私聊预览发送失败：原因=%s", exc)
-                self.api.send_message(
-                    self.config.owner_user_id,
-                    f"✅简报封面已更新\n⚠️私聊预览发送失败\n原因：{exc}",
-                )
+            self._save_cover_photo(message)
             return
 
         enabled = bool(self.store.get_state(REPORT_COVER_STATE_KEY))
-        status = "已启用" if enabled else "未设置"
         self.api.send_message(
             self.config.owner_user_id,
-            f"🖼️简报封面：{status}\n发送图片并附带 /cover 即可设置\n发送 /cover off 可停用",
+            cover_panel_text(enabled),
+            reply_markup=cover_panel_keyboard(enabled),
         )
+
+    def _save_cover_photo(self, message: dict[str, Any]) -> None:
+        photos = [item for item in message.get("photo") or [] if item.get("file_id")]
+        if not photos:
+            return
+        selected = max(
+            photos,
+            key=lambda item: (
+                int(item.get("file_size") or 0),
+                int(item.get("width") or 0) * int(item.get("height") or 0),
+            ),
+        )
+        file_id = str(selected["file_id"])
+        self.cover_upload_deadline = None
+        self.store.set_state(REPORT_COVER_STATE_KEY, file_id)
+        try:
+            self.api.send_photo(self.config.owner_user_id, file_id, self._cover_preview_text())
+            LOG.info("简报封面已更新，私聊预览发送完成")
+        except Exception as exc:
+            LOG.warning("简报封面已更新，但私聊预览发送失败：原因=%s", exc)
+            self.api.send_message(
+                self.config.owner_user_id,
+                f"✅简报封面已更新\n⚠️私聊预览发送失败\n原因：{exc}",
+                reply_markup=main_menu_keyboard(),
+            )
 
     def _cover_preview_text(self) -> str:
         now = self._now()
@@ -665,9 +856,14 @@ class AssistantService:
         command = text.split()[0].split("@")[0].lower()
         target_chat = chat_ref_for_api(chat_id)
         if command == "/report":
-            self.send_current_report(target_chat)
+            self.send_current_report(target_chat, reply_markup=group_report_keyboard())
         elif command in {"/start", "/help", "/id"}:
-            self.api.send_message(target_chat, self.group_ready_text(), disable_web_page_preview=True)
+            self.api.send_message(
+                target_chat,
+                self.group_ready_text(),
+                disable_web_page_preview=True,
+                reply_markup=group_menu_keyboard(),
+            )
 
     def _handle_chat_member(self, update: dict[str, Any]) -> None:
         chat = update.get("chat") or {}
@@ -675,7 +871,11 @@ class AssistantService:
         if chat_type not in {"group", "supergroup", "channel"}:
             return
         chat_id = normalize_chat_ref(chat)
-        allowed = chat_id == self.config.report_chat_id or self._chat_allowed_as_source(chat)
+        allowed = (
+            chat_id == self.config.report_chat_id
+            or chat_id == self.config.report_channel_id
+            or self._chat_allowed_as_source(chat)
+        )
         if not allowed and self.config.unauthorized_group_action == "leave":
             self._leave_unauthorized_chat(chat, chat_id)
 
@@ -700,31 +900,47 @@ class AssistantService:
     def _handle_owner_command(self, text: str) -> None:
         command = text.split()[0].split("@")[0].lower()
         if command in {"/start", "/help"}:
-            self.api.send_message(self.config.owner_user_id, self.help_text(), disable_web_page_preview=True)
+            self.api.send_message(
+                self.config.owner_user_id,
+                self.help_text(),
+                disable_web_page_preview=True,
+                reply_markup=main_menu_keyboard(),
+            )
         elif command == "/status":
-            self.api.send_message(self.config.owner_user_id, self.status_text(), disable_web_page_preview=True)
+            self.api.send_message(
+                self.config.owner_user_id,
+                self.status_text(),
+                disable_web_page_preview=True,
+                reply_markup=detail_keyboard("menu:status"),
+            )
         elif command == "/report":
-            self.send_current_report()
+            self.send_current_report(reply_markup=detail_keyboard("menu:report"))
         elif command == "/recent":
-            self.api.send_message(self.config.owner_user_id, self.recent_text(self._recent_limit_from_command(text)), disable_web_page_preview=True)
+            self.api.send_message(
+                self.config.owner_user_id,
+                self.recent_text(self._recent_limit_from_command(text)),
+                disable_web_page_preview=True,
+                reply_markup=detail_keyboard("menu:recent"),
+            )
         elif command == "/check":
-            self.api.send_message(self.config.owner_user_id, self.check_text(), disable_web_page_preview=True)
+            self.api.send_message(
+                self.config.owner_user_id,
+                self.check_text(),
+                disable_web_page_preview=True,
+                reply_markup=detail_keyboard("menu:check"),
+            )
         else:
-            self.api.send_message(self.config.owner_user_id, "未知命令，发送 /help 查看可用功能。")
+            self.api.send_message(
+                self.config.owner_user_id,
+                main_menu_text(),
+                reply_markup=main_menu_keyboard(),
+            )
 
     def group_ready_text(self) -> str:
-        return "✅此群已配置完成\n可用命令：/report"
+        return "✅此群已配置完成"
 
     def help_text(self) -> str:
-        return "\n".join(
-            [
-                "SlowLink Assistant Bot",
-                "/status 查看运行状态",
-                "/report 查看当前报告",
-                "/recent 查看最近记录",
-                "/check 自检",
-            ]
-        )
+        return main_menu_text()
 
     def _format_duration(self, start: datetime, end: datetime) -> str:
         seconds = max(0, int((end - start).total_seconds()))
@@ -760,6 +976,25 @@ class AssistantService:
             return "已配置"
         return "异常"
 
+    def _report_channel_status_text(self) -> str:
+        if self.config.report_channel_id_for_api is None:
+            return "未配置"
+        try:
+            me = self.api.get_me()
+            member = self.api.get_chat_member(self.config.report_channel_id_for_api, int(me.get("id") or 0))
+        except Exception:
+            return "异常"
+        status = str(member.get("status") or "")
+        if status == "creator":
+            return "已配置"
+        if (
+            status == "administrator"
+            and member.get("can_post_messages") is not False
+            and member.get("can_edit_messages") is not False
+        ):
+            return "已配置"
+        return "异常"
+
     def status_text(self) -> str:
         now = self._now()
         today = manual_period("daily", now)
@@ -772,6 +1007,7 @@ class AssistantService:
                 f"版本：{__version__}",
                 f"源频道：{len(self.config.source_channel_refs)}个",
                 f"报表群：{self._report_group_status_text()}",
+                f"简报频道：{self._report_channel_status_text()}",
                 f"运行：{self._format_duration(self.started_at, now)}",
                 f"今日：转发{stats.success_count}条/失败{stats.failure_count}条",
                 f"今日纠错：删除{moderation_stats.deleted_count}条",
@@ -796,6 +1032,7 @@ class AssistantService:
                 f"守护：{self._watchdog_status_text(now)}",
                 f"源频道：{len(self.config.source_channel_refs)}个",
                 f"报表群：{self._report_group_status_text()}",
+                f"简报频道：{self._report_channel_status_text()}",
                 f"今日：转发{stats.success_count}条/失败{stats.failure_count}条",
                 f"最近：{recent}",
             ]
@@ -906,22 +1143,53 @@ class AssistantService:
             )
         return "\n".join(lines)
 
-    def send_current_report(self, chat_id=None) -> None:
+    def send_current_report(self, chat_id=None, reply_markup=None) -> None:
         target_chat = self.config.owner_user_id if chat_id is None else chat_id
         include_diagnostics = str(target_chat) == str(self.config.owner_user_id)
         self.api.send_message(
             target_chat,
             self.current_report_text(include_diagnostics=include_diagnostics),
             disable_web_page_preview=True,
+            reply_markup=reply_markup,
         )
 
-    def _send_scheduled_report(self, message_text: str, log_name: str, notice_context: str):
+    def _scheduled_report_destinations(self) -> list[dict[str, Any]]:
+        destinations = [
+            {
+                "role": "group",
+                "key": f"group:{self.config.report_chat_id}",
+                "name": "报表群",
+                "chat_id": self.config.report_chat_id_for_api,
+                "pin_state_key": LAST_REPORT_PIN_STATE_KEY,
+            }
+        ]
+        if self.config.report_channel_id and self.config.report_channel_id != self.config.report_chat_id:
+            destinations.append(
+                {
+                    "role": "channel",
+                    "key": f"channel:{self.config.report_channel_id}",
+                    "name": "简报频道",
+                    "chat_id": self.config.report_channel_id_for_api,
+                    "pin_state_key": LAST_REPORT_CHANNEL_PIN_STATE_KEY,
+                }
+            )
+        return destinations
+
+    def _send_scheduled_report(
+        self,
+        message_text: str,
+        log_name: str,
+        notice_context: str,
+        target_chat_id=None,
+        target_name: str = "报表群",
+    ):
+        target_chat_id = self.config.report_chat_id_for_api if target_chat_id is None else target_chat_id
         cover = self.store.get_state(REPORT_COVER_STATE_KEY)
         cover_error = None
         if cover and len(message_text) <= PHOTO_CAPTION_LIMIT:
             try:
                 return self.api.send_photo(
-                    self.config.report_chat_id_for_api,
+                    target_chat_id,
                     cover,
                     message_text,
                 )
@@ -932,20 +1200,21 @@ class AssistantService:
 
         if cover_error is not None:
             LOG.warning(
-                "%s封面发送失败，已改发纯文字：%s 原因=%s",
+                "%s封面发送失败，已改发纯文字：%s 目标=%s 原因=%s",
                 log_name,
                 notice_context,
+                target_name,
                 cover_error,
             )
 
         result = self.api.send_message(
-            self.config.report_chat_id_for_api,
+            target_chat_id,
             message_text,
             disable_web_page_preview=True,
         )
         if cover_error is not None:
             self._send_owner_notice(
-                f"⚠️{log_name}封面发送失败，已改发纯文字\n{notice_context}\n原因：{cover_error}"
+                f"⚠️{log_name}封面发送失败，已改发纯文字\n目标：{target_name}\n{notice_context}\n原因：{cover_error}"
             )
         return result
 
@@ -954,12 +1223,22 @@ class AssistantService:
         self._backup_database(now)
         self._cleanup_old_events(now)
         coverage_start = self._statistics_coverage_start(now)
+        destinations = self._scheduled_report_destinations()
         pending = []
         for kind in ("daily", "weekly", "monthly"):
             if not should_run_report(kind, now, self.config.report_hour, self.config.report_minute):
                 continue
             period = scheduled_period(kind, now)
             if self.store.was_report_sent(kind, period.key):
+                continue
+            pending_destination_keys = {
+                destination["key"]
+                for destination in destinations
+                if self._report_kind_enabled(destination["role"], kind)
+                and not self.store.was_report_delivered(kind, period.key, destination["key"])
+            }
+            if not pending_destination_keys:
+                self.store.mark_report_sent(kind, period.key, now)
                 continue
             scheduled_at = now.replace(
                 hour=self.config.report_hour,
@@ -996,98 +1275,163 @@ class AssistantService:
                     "previous_success_count": previous_count,
                     "comparison_status": "available" if previous_count is not None else "unavailable",
                     "data_start": max(period.start, coverage_start),
+                    "pending_destination_keys": pending_destination_keys,
                 }
             )
 
         if not pending:
             return
 
-        combined = len(pending) > 1
-        titles = "、".join(item["title"] for item in pending)
-        first = pending[0]
-        if combined:
-            compact_sections = [
-                format_compact_report(
-                    item["kind"],
-                    item["period"],
-                    item["stats"],
-                    item["previous_success_count"],
-                    data_start=item["data_start"],
-                )
-                for item in pending
+        for destination in destinations:
+            target_pending = [
+                item for item in pending if destination["key"] in item["pending_destination_keys"]
             ]
-            message_text = "📊周期简报\n\n" + "\n\n".join(compact_sections)
-            log_name = "组合报表"
-            log_context = f"包含={titles}"
-            notice_context = f"包含：{titles}"
-        else:
-            message_text = first["text"]
-            period = first["period"]
-            period_field = report_period_field(first["kind"])
-            period_label = format_period_label(period)
-            log_name = first["title"]
-            log_context = f"{period_field}={period_label}"
-            notice_context = f"{period_field}：{period_label}"
+            if not target_pending:
+                continue
 
-        try:
-            result = self._send_scheduled_report(message_text, log_name, notice_context)
-        except Exception as exc:
-            LOG.warning("%s发送失败：%s 原因=%s", log_name, log_context, exc)
-            self._send_owner_notice(f"⚠️{log_name}发送失败\n{notice_context}\n原因：{exc}")
-            return
+            combined = len(target_pending) > 1
+            titles = "、".join(item["title"] for item in target_pending)
+            first = target_pending[0]
+            if combined:
+                compact_sections = [
+                    format_compact_report(
+                        item["kind"],
+                        item["period"],
+                        item["stats"],
+                        item["previous_success_count"],
+                        data_start=item["data_start"],
+                    )
+                    for item in target_pending
+                ]
+                message_text = "📊周期简报\n\n" + "\n\n".join(compact_sections)
+                log_name = "组合报表"
+                log_context = f"包含={titles}"
+                notice_context = f"包含：{titles}"
+            else:
+                message_text = first["text"]
+                period = first["period"]
+                period_field = report_period_field(first["kind"])
+                period_label = format_period_label(period)
+                log_name = first["title"]
+                log_context = f"{period_field}={period_label}"
+                notice_context = f"{period_field}：{period_label}"
 
-        message_id = int((result or {}).get("message_id") or 0)
-        if message_id:
             try:
-                self.api.pin_chat_message(self.config.report_chat_id_for_api, message_id, disable_notification=True)
-                self._unpin_previous_report(message_id)
+                result = self._send_scheduled_report(
+                    message_text,
+                    log_name,
+                    notice_context,
+                    target_chat_id=destination["chat_id"],
+                    target_name=destination["name"],
+                )
             except Exception as exc:
-                LOG.warning("%s置顶失败：%s 原因=%s", log_name, log_context, exc)
-                self._send_owner_notice(f"⚠️{log_name}置顶失败\n{notice_context}\n原因：{exc}")
+                LOG.warning(
+                    "%s发送失败：%s 目标=%s 原因=%s",
+                    log_name,
+                    log_context,
+                    destination["name"],
+                    exc,
+                )
+                self._send_owner_notice(
+                    f"⚠️{log_name}发送失败\n目标：{destination['name']}\n{notice_context}\n原因：{exc}"
+                )
+                continue
+
+            message_id = int((result or {}).get("message_id") or 0)
+            if message_id:
+                try:
+                    self.api.pin_chat_message(destination["chat_id"], message_id, disable_notification=True)
+                    self._unpin_previous_report(
+                        message_id,
+                        chat_id=destination["chat_id"],
+                        state_key=destination["pin_state_key"],
+                        target_name=destination["name"],
+                    )
+                except Exception as exc:
+                    LOG.warning(
+                        "%s置顶失败：%s 目标=%s 原因=%s",
+                        log_name,
+                        log_context,
+                        destination["name"],
+                        exc,
+                    )
+                    self._send_owner_notice(
+                        f"⚠️{log_name}置顶失败\n目标：{destination['name']}\n{notice_context}\n原因：{exc}"
+                    )
+
+            for item in target_pending:
+                if self.store.get_report_snapshot(item["kind"], item["period"].key) is not None:
+                    continue
+                try:
+                    self.store.save_report_snapshot(
+                        period_type=item["kind"],
+                        period_key=item["period"].key,
+                        period_start=item["period"].start,
+                        period_end=item["period"].end,
+                        data_start=item["data_start"],
+                        success_count=item["stats"].success_count,
+                        failure_count=item["stats"].failure_count,
+                        deleted_count=item["moderation_stats"].deleted_count,
+                        comparison_start=item["comparison_period"].start,
+                        comparison_end=item["comparison_period"].end,
+                        previous_success_count=item["previous_success_count"],
+                        comparison_status=item["comparison_status"],
+                        message_id=message_id,
+                        report_text=item["text"],
+                        sent_at=now,
+                    )
+                except Exception as exc:
+                    LOG.warning(
+                        "报表快照保存失败：类型=%s 周期=%s 原因=%s",
+                        item["kind"],
+                        item["period"].key,
+                        exc,
+                    )
+                    self._send_owner_notice(
+                        f"⚠️报表已发送，但快照保存失败\n类型：{item['title']}\n周期：{item['period'].key}"
+                    )
+
+            for item in target_pending:
+                self.store.mark_report_delivered(
+                    item["kind"],
+                    item["period"].key,
+                    destination["key"],
+                    now,
+                )
+
+            if combined:
+                LOG.info("组合报表发送完成：包含=%s 目标=%s", titles, destination["name"])
+            else:
+                stats = first["stats"]
+                LOG.info(
+                    "%s发送完成：%s=%s 转发=%s条 异常=%s次 纠错删除=%s条 目标=%s",
+                    first["title"],
+                    period_field,
+                    period_label,
+                    stats.success_count,
+                    stats.failure_count,
+                    first["moderation_stats"].deleted_count,
+                    destination["name"],
+                )
 
         for item in pending:
-            try:
-                self.store.save_report_snapshot(
-                    period_type=item["kind"],
-                    period_key=item["period"].key,
-                    period_start=item["period"].start,
-                    period_end=item["period"].end,
-                    data_start=item["data_start"],
-                    success_count=item["stats"].success_count,
-                    failure_count=item["stats"].failure_count,
-                    deleted_count=item["moderation_stats"].deleted_count,
-                    comparison_start=item["comparison_period"].start,
-                    comparison_end=item["comparison_period"].end,
-                    previous_success_count=item["previous_success_count"],
-                    comparison_status=item["comparison_status"],
-                    message_id=message_id,
-                    report_text=item["text"],
-                    sent_at=now,
-                )
-            except Exception as exc:
-                LOG.warning("报表快照保存失败：类型=%s 周期=%s 原因=%s", item["kind"], item["period"].key, exc)
-                self._send_owner_notice(
-                    f"⚠️报表已发送，但快照保存失败\n类型：{item['title']}\n周期：{item['period'].key}"
-                )
-            self.store.mark_report_sent(item["kind"], item["period"].key, now)
+            if all(
+                self.store.was_report_delivered(item["kind"], item["period"].key, destination["key"])
+                for destination in destinations
+                if self._report_kind_enabled(destination["role"], item["kind"])
+            ):
+                self.store.mark_report_sent(item["kind"], item["period"].key, now)
 
-        if combined:
-            LOG.info("组合报表发送完成：包含=%s", titles)
-        else:
-            stats = first["stats"]
-            LOG.info(
-                "%s发送完成：%s=%s 转发=%s条 异常=%s次 纠错删除=%s条",
-                first["title"],
-                period_field,
-                period_label,
-                stats.success_count,
-                stats.failure_count,
-                first["moderation_stats"].deleted_count,
-            )
-
-    def _unpin_previous_report(self, current_message_id: int) -> None:
-        previous_message_id = self.store.get_state(LAST_REPORT_PIN_STATE_KEY)
-        self.store.set_state(LAST_REPORT_PIN_STATE_KEY, str(int(current_message_id)))
+    def _unpin_previous_report(
+        self,
+        current_message_id: int,
+        chat_id=None,
+        state_key: str = LAST_REPORT_PIN_STATE_KEY,
+        target_name: str = "报表群",
+    ) -> None:
+        chat_id = self.config.report_chat_id_for_api if chat_id is None else chat_id
+        previous_message_id = self.store.get_state(state_key)
+        self.store.set_state(state_key, str(int(current_message_id)))
         if not previous_message_id:
             return
         try:
@@ -1097,9 +1441,9 @@ class AssistantService:
         if previous == int(current_message_id):
             return
         try:
-            self.api.unpin_chat_message(self.config.report_chat_id_for_api, previous)
+            self.api.unpin_chat_message(chat_id, previous)
         except Exception as exc:
-            LOG.warning("旧报表取消置顶失败：消息=%s 原因=%s", previous, exc)
+            LOG.warning("旧报表取消置顶失败：目标=%s 消息=%s 原因=%s", target_name, previous, exc)
 
     def _backup_database(self, now: datetime) -> None:
         if self.last_backup_date == now.date():

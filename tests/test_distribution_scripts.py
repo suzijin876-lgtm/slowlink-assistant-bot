@@ -50,6 +50,7 @@ class DistributionScriptTests(unittest.TestCase):
         self.assertNotIn("trap cleanup EXIT", text)
         self.assertIn('[ "$OWNER_USER_ID_VALUE" -gt 0 ]', text)
         self.assertIn('is_chat_ref "$REPORT_CHAT_ID_VALUE"', text)
+        self.assertIn('[ -z "$REPORT_CHANNEL_ID_VALUE" ] || is_chat_ref "$REPORT_CHANNEL_ID_VALUE"', text)
         self.assertIn('validate_source_refs "$SOURCE_CHANNEL_IDS_VALUE"', text)
 
         package_guard = text.index("安装包包含不应覆盖的配置、数据或Git目录")
@@ -68,14 +69,16 @@ class DistributionScriptTests(unittest.TestCase):
         text = self.read_required("install.sh")
 
         for fragment in (
-            "[1/4]机器人Token",
+            "[1/5]机器人Token",
             "从@BotFather获取",
             "输入内容会显示",
-            "[2/4]主人用户ID",
+            "[2/5]主人用户ID",
             "你自己的Telegram数字ID",
-            "[3/4]报表群ID",
+            "[3/5]报表群ID",
             "接收日报、周报和月报",
-            "[4/4]源频道ID",
+            "[4/5]简报频道ID",
+            "直接回车则不向频道发送简报",
+            "[5/5]源频道ID",
             "多个用英文逗号分隔",
         ):
             self.assertIn(fragment, text)
@@ -162,6 +165,7 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
 BOT_TOKEN_VALUE="222:new_token"
 OWNER_USER_ID_VALUE="222"
 REPORT_CHAT_ID_VALUE="-100222"
+REPORT_CHANNEL_ID_VALUE="-100444"
 SOURCE_CHANNEL_IDS_VALUE="-100333,@new_source"
 write_updated_env "$INPUT_ENV" "$OUTPUT_ENV"
 '''
@@ -181,6 +185,7 @@ write_updated_env "$INPUT_ENV" "$OUTPUT_ENV"
                 "BOT_TOKEN=111:old_token\n"
                 "OWNER_USER_ID=111\n"
                 "REPORT_CHAT_ID=-100111\n"
+                "REPORT_CHANNEL_ID=-100111\n"
                 "SOURCE_CHANNEL_IDS=-100111\n"
                 "POLL_TIMEOUT=99\n"
                 "CUSTOM_SETTING=keep_me\n",
@@ -202,6 +207,7 @@ write_updated_env "$INPUT_ENV" "$OUTPUT_ENV"
                 "BOT_TOKEN=222:new_token",
                 "OWNER_USER_ID=222",
                 "REPORT_CHAT_ID=-100222",
+                "REPORT_CHANNEL_ID=-100444",
                 "SOURCE_CHANNEL_IDS=-100333,@new_source",
                 "POLL_TIMEOUT=99",
                 "CUSTOM_SETTING=keep_me",

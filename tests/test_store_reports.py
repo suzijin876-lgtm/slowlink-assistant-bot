@@ -19,6 +19,24 @@ TZ = ZoneInfo("Asia/Shanghai")
 
 
 class StoreAndReportTests(unittest.TestCase):
+    def test_report_delivery_state_is_independent_and_legacy_safe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = EventStore(Path(tmp) / "assistant.sqlite3")
+            now = datetime(2026, 7, 10, 0, 0, tzinfo=TZ)
+            try:
+                store.mark_report_sent("daily", "legacy", now)
+                self.assertTrue(store.was_report_delivered("daily", "legacy", "group:-1009"))
+                self.assertTrue(store.was_report_delivered("daily", "legacy", "channel:-1008"))
+
+                store.mark_report_delivered("daily", "new", "group:-1009", now)
+                self.assertTrue(store.was_report_delivered("daily", "new", "group:-1009"))
+                self.assertFalse(store.was_report_delivered("daily", "new", "channel:-1008"))
+
+                store.mark_report_delivered("daily", "new", "channel:-1008", now)
+                self.assertTrue(store.was_report_delivered("daily", "new", "channel:-1008"))
+            finally:
+                store.close()
+
     def test_statistics_coverage_start_preserves_service_start_before_first_event(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "assistant.sqlite3"

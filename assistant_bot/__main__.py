@@ -61,8 +61,17 @@ def main() -> int:
         log.error("Telegram 初始化失败：%s", exc)
         return 3
     heartbeat.touch(force=True)
+    try:
+        api.set_my_commands([{"command": "start", "description": "打开主面板"}])
+    except TelegramAPIError as exc:
+        log.warning("按钮入口设置失败，Bot继续运行：%s", exc)
     log.info("SlowLink Assistant 已启动：版本=%s", __version__)
-    log.info("Bot 信息：账号=@%s 源频道=%d个 报表群=已配置", me.get("username", "unknown"), len(config.source_channel_refs))
+    log.info(
+        "Bot 信息：账号=@%s 源频道=%d个 报表群=已配置 简报频道=%s",
+        me.get("username", "unknown"),
+        len(config.source_channel_refs),
+        "已配置" if config.report_channel_id else "未配置",
+    )
     service.verify_source_reactions()
 
     offset = store.get_offset()

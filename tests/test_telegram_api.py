@@ -110,6 +110,15 @@ class TelegramAPITests(unittest.TestCase):
         self.assertEqual(calls[0][0], "sendMessage")
         self.assertEqual(calls[0][1]["reply_markup"], keyboard)
 
+    def test_set_my_commands_keeps_only_button_panel_entry(self):
+        api, calls = self.make_capturing_api()
+        commands = [{"command": "start", "description": "打开主面板"}]
+
+        api.set_my_commands(commands)
+
+        self.assertEqual(calls[0][0], "setMyCommands")
+        self.assertEqual(calls[0][1], {"commands": commands})
+
     def test_send_photo_uses_file_id_and_caption(self):
         api, calls = self.make_capturing_api()
 

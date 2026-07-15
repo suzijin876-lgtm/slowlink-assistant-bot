@@ -11,6 +11,12 @@ class DeployFileTests(unittest.TestCase):
         self.assertIn('max-size: "10m"', text)
         self.assertIn('max-file: "3"', text)
 
+    def test_example_configuration_documents_optional_report_channel(self):
+        text = Path(".env.example").read_text(encoding="utf-8")
+
+        self.assertIn("REPORT_CHANNEL_ID=", text)
+        self.assertIn("optional", text.lower())
+
     def test_dockerignore_keeps_build_context_small(self):
         text = Path(".dockerignore").read_text(encoding="utf-8")
 
