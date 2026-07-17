@@ -121,6 +121,10 @@ validate_config_values() {
   is_chat_ref "$REPORT_CHAT_ID_VALUE" || die "报表群ID格式不正确：请填写负数群ID或群用户名"
   [ -z "$REPORT_CHANNEL_ID_VALUE" ] || is_chat_ref "$REPORT_CHANNEL_ID_VALUE" || die "简报频道ID格式不正确：请填写负数频道ID或频道用户名"
   validate_source_refs "$SOURCE_CHANNEL_IDS_VALUE" || die "源频道ID格式不正确：请填写负数频道ID或频道用户名，多个用英文逗号分隔"
+  case "$SLOWLINK_PANEL_URL_VALUE" in
+    ''|http://*|https://*) ;;
+    *) die "SlowLink面板地址必须以http://或https://开头" ;;
+  esac
 }
 
 write_new_env() {
@@ -132,6 +136,7 @@ OWNER_USER_ID=$OWNER_USER_ID_VALUE
 REPORT_CHAT_ID=$REPORT_CHAT_ID_VALUE
 REPORT_CHANNEL_ID=$REPORT_CHANNEL_ID_VALUE
 SOURCE_CHANNEL_IDS=$SOURCE_CHANNEL_IDS_VALUE
+SLOWLINK_PANEL_URL=$SLOWLINK_PANEL_URL_VALUE
 DATA_PATH=data/assistant.sqlite3
 TIMEZONE=Asia/Shanghai
 POLL_TIMEOUT=25
@@ -152,6 +157,7 @@ write_updated_env() {
   seen_report=0
   seen_report_channel=0
   seen_sources=0
+  seen_panel_url=0
   umask 077
   : > "$output"
   while IFS= read -r line || [ -n "$line" ]; do
@@ -176,6 +182,10 @@ write_updated_env() {
         printf 'SOURCE_CHANNEL_IDS=%s\n' "$SOURCE_CHANNEL_IDS_VALUE" >> "$output"
         seen_sources=1
         ;;
+      SLOWLINK_PANEL_URL=*)
+        printf 'SLOWLINK_PANEL_URL=%s\n' "$SLOWLINK_PANEL_URL_VALUE" >> "$output"
+        seen_panel_url=1
+        ;;
       *)
         printf '%s\n' "$line" >> "$output"
         ;;
@@ -186,6 +196,7 @@ write_updated_env() {
   [ "$seen_report" -eq 1 ] || printf 'REPORT_CHAT_ID=%s\n' "$REPORT_CHAT_ID_VALUE" >> "$output"
   [ "$seen_report_channel" -eq 1 ] || printf 'REPORT_CHANNEL_ID=%s\n' "$REPORT_CHANNEL_ID_VALUE" >> "$output"
   [ "$seen_sources" -eq 1 ] || printf 'SOURCE_CHANNEL_IDS=%s\n' "$SOURCE_CHANNEL_IDS_VALUE" >> "$output"
+  [ "$seen_panel_url" -eq 1 ] || printf 'SLOWLINK_PANEL_URL=%s\n' "$SLOWLINK_PANEL_URL_VALUE" >> "$output"
   chmod 600 "$output"
 }
 
@@ -222,25 +233,29 @@ configure_existing() {
   OLD_REPORT_CHAT_ID=$(read_env_value REPORT_CHAT_ID "$ENV_PATH")
   OLD_REPORT_CHANNEL_ID=$(read_env_value REPORT_CHANNEL_ID "$ENV_PATH")
   OLD_SOURCE_CHANNEL_IDS=$(read_env_value SOURCE_CHANNEL_IDS "$ENV_PATH")
+  OLD_SLOWLINK_PANEL_URL=$(read_env_value SLOWLINK_PANEL_URL "$ENV_PATH")
   [ -n "$OLD_BOT_TOKEN" ] || die "现有配置缺少BOT_TOKEN"
   [ -n "$OLD_OWNER_USER_ID" ] || die "现有配置缺少OWNER_USER_ID"
   [ -n "$OLD_REPORT_CHAT_ID" ] || die "现有配置缺少REPORT_CHAT_ID"
   [ -n "$OLD_SOURCE_CHANNEL_IDS" ] || die "现有配置缺少SOURCE_CHANNEL_IDS"
 
-  BOT_TOKEN_VALUE=$(prompt_keep '[1/5]机器人Token（已配置，直接回车保留；输入新Token则替换）
+  BOT_TOKEN_VALUE=$(prompt_keep '[1/6]机器人Token（已配置，直接回车保留；输入新Token则替换）
 请输入：' "$OLD_BOT_TOKEN")
-  OWNER_USER_ID_VALUE=$(prompt_keep "[2/5]主人用户ID
+  OWNER_USER_ID_VALUE=$(prompt_keep "[2/6]主人用户ID
 当前：$OLD_OWNER_USER_ID
 直接回车保留，或输入新值：" "$OLD_OWNER_USER_ID")
-  REPORT_CHAT_ID_VALUE=$(prompt_keep "[3/5]报表群ID
+  REPORT_CHAT_ID_VALUE=$(prompt_keep "[3/6]报表群ID
 当前：$OLD_REPORT_CHAT_ID
 直接回车保留，或输入新值：" "$OLD_REPORT_CHAT_ID")
-  REPORT_CHANNEL_ID_VALUE=$(prompt_keep_optional "[4/5]简报频道ID（可选）
+  REPORT_CHANNEL_ID_VALUE=$(prompt_keep_optional "[4/6]简报频道ID（可选）
 当前：${OLD_REPORT_CHANNEL_ID:-未配置}
 直接回车保留，输入新值替换，输入0停用：" "$OLD_REPORT_CHANNEL_ID")
-  SOURCE_CHANNEL_IDS_VALUE=$(prompt_keep "[5/5]源频道ID
+  SOURCE_CHANNEL_IDS_VALUE=$(prompt_keep "[5/6]源频道ID
 当前：$OLD_SOURCE_CHANNEL_IDS
 直接回车保留，或输入新值：" "$OLD_SOURCE_CHANNEL_IDS")
+  SLOWLINK_PANEL_URL_VALUE=$(prompt_keep_optional "[6/6]SlowLink面板地址（可选）
+当前：${OLD_SLOWLINK_PANEL_URL:-未配置}
+直接回车保留，输入新地址替换，输入0隐藏按钮：" "$OLD_SLOWLINK_PANEL_URL")
   validate_config_values
   write_updated_env "$ENV_PATH" "$NEW_ENV"
 
@@ -250,8 +265,8 @@ configure_existing() {
   log "应用新配置并重建Assistant Bot"
   if docker compose up -d --no-deps --force-recreate assistant_bot && wait_for_health; then
     log "配置修改完成"
-    printf 'Token：已配置\n主人用户ID：%s\n报表群：%s\n简报频道：%s\n源频道：%s\n' \
-      "$OWNER_USER_ID_VALUE" "$REPORT_CHAT_ID_VALUE" "${REPORT_CHANNEL_ID_VALUE:-未配置}" "$SOURCE_CHANNEL_IDS_VALUE"
+    printf 'Token：已配置\n主人用户ID：%s\n报表群：%s\n简报频道：%s\n源频道：%s\nSlowLink面板：%s\n' \
+      "$OWNER_USER_ID_VALUE" "$REPORT_CHAT_ID_VALUE" "${REPORT_CHANNEL_ID_VALUE:-未配置}" "$SOURCE_CHANNEL_IDS_VALUE" "${SLOWLINK_PANEL_URL_VALUE:-未配置}"
     return 0
   fi
 
@@ -485,20 +500,23 @@ fi
 
 ENV_FILE="$TMP_DIR/new.env"
 if [ "$KEEP_ENV" -eq 0 ]; then
-  BOT_TOKEN_VALUE=${BOT_TOKEN:-$(prompt_value '[1/5]机器人Token
+  BOT_TOKEN_VALUE=${BOT_TOKEN:-$(prompt_value '[1/6]机器人Token
 从@BotFather获取；输入内容会显示，例如123456789:AAExampleToken。
 请输入：')}
-  OWNER_USER_ID_VALUE=${OWNER_USER_ID:-$(prompt_value '[2/5]主人用户ID
+  OWNER_USER_ID_VALUE=${OWNER_USER_ID:-$(prompt_value '[2/6]主人用户ID
 填写你自己的Telegram数字ID，例如123456789。
 请输入：')}
-  REPORT_CHAT_ID_VALUE=${REPORT_CHAT_ID:-$(prompt_value '[3/5]报表群ID
+  REPORT_CHAT_ID_VALUE=${REPORT_CHAT_ID:-$(prompt_value '[3/6]报表群ID
 填写接收日报、周报和月报的群ID，通常以-100开头。
 请输入：')}
-  REPORT_CHANNEL_ID_VALUE=${REPORT_CHANNEL_ID:-$(prompt_optional '[4/5]简报频道ID（可选）
+  REPORT_CHANNEL_ID_VALUE=${REPORT_CHANNEL_ID:-$(prompt_optional '[4/6]简报频道ID（可选）
 填写同步全部简报并自动置顶的频道ID；直接回车则不向频道发送简报。
 请输入：')}
-  SOURCE_CHANNEL_IDS_VALUE=${SOURCE_CHANNEL_IDS:-$(prompt_value '[5/5]源频道ID
+  SOURCE_CHANNEL_IDS_VALUE=${SOURCE_CHANNEL_IDS:-$(prompt_value '[5/6]源频道ID
 填写Bot需要监听的频道ID，通常以-100开头；多个用英文逗号分隔。
+请输入：')}
+  SLOWLINK_PANEL_URL_VALUE=${SLOWLINK_PANEL_URL:-$(prompt_optional '[6/6]SlowLink面板地址（可选）
+填写主SlowLink网页完整地址；直接回车则不显示跳转按钮。
 请输入：')}
   validate_config_values
   write_new_env "$ENV_FILE"

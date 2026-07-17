@@ -65,6 +65,21 @@ class ConfigTests(unittest.TestCase):
         self.assertIsNone(config.report_channel_id)
         self.assertIsNone(config.report_channel_id_for_api)
 
+    def test_optional_slowlink_panel_url_accepts_http_url(self):
+        env = self.valid_env()
+        env["SLOWLINK_PANEL_URL"] = "https://slowlink.example/"
+
+        config = BotConfig.load(env=env, env_file=None)
+
+        self.assertEqual(config.slowlink_panel_url, "https://slowlink.example/")
+
+    def test_slowlink_panel_url_rejects_non_http_scheme(self):
+        env = self.valid_env()
+        env["SLOWLINK_PANEL_URL"] = "ftp://slowlink.example/"
+
+        with self.assertRaisesRegex(ConfigError, "SLOWLINK_PANEL_URL"):
+            BotConfig.load(env=env, env_file=None)
+
     def test_missing_required_config_raises_clear_error(self):
         with self.assertRaises(ConfigError) as ctx:
             BotConfig.load(env={}, env_file=None)

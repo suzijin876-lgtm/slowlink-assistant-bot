@@ -329,7 +329,7 @@ class AssistantService:
         action = data.split(":", 1)[1]
         if action == "home":
             self.cover_upload_deadline = None
-            text, keyboard = main_menu_text(), main_menu_keyboard()
+            text, keyboard = main_menu_text(), main_menu_keyboard(self.config.slowlink_panel_url)
         elif action == "report":
             text, keyboard = self.current_report_text(), detail_keyboard("menu:report")
         elif action == "status":
@@ -818,7 +818,7 @@ class AssistantService:
             self.api.send_message(
                 self.config.owner_user_id,
                 f"✅简报封面已更新\n⚠️私聊预览发送失败\n原因：{exc}",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(self.config.slowlink_panel_url),
             )
 
     def _cover_preview_text(self) -> str:
@@ -904,7 +904,7 @@ class AssistantService:
                 self.config.owner_user_id,
                 self.help_text(),
                 disable_web_page_preview=True,
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(self.config.slowlink_panel_url),
             )
         elif command == "/status":
             self.api.send_message(
@@ -933,7 +933,7 @@ class AssistantService:
             self.api.send_message(
                 self.config.owner_user_id,
                 main_menu_text(),
-                reply_markup=main_menu_keyboard(),
+                reply_markup=main_menu_keyboard(self.config.slowlink_panel_url),
             )
 
     def group_ready_text(self) -> str:

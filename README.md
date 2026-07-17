@@ -24,7 +24,7 @@ SlowLink Assistant Bot 与主 [SlowLink](https://github.com/suzijin876-lgtm/slow
 curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-bot/main/install.sh | sudo bash
 ```
 
-脚本会显示中文菜单，可选择安装、更新、卸载或修改配置。修改配置时每项直接回车即可保留原值，失败会自动恢复旧配置。首次安装需要填写 Bot Token、主人用户 ID、固定报表群、可选简报频道和源频道。
+脚本会显示中文菜单，可选择安装、更新、卸载或修改配置。修改配置时每项直接回车即可保留原值，失败会自动恢复旧配置。首次安装需要填写 Bot Token、主人用户 ID、固定报表群、可选简报频道、源频道和可选SlowLink面板地址。
 
 ## 主要功能
 
@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-
 | --- | --- |
 | 频道帖子链接 | 公开帖子支持`telegram.me/用户名/消息号`，私有帖子保留`t.me/c/内部ID/消息号`，并支持论坛话题路径 |
 | 私聊通知 | 向主人发送转发结果、运行提醒和自检信息 |
-| 按钮主面板 | 私聊集中查看报告、状态、记录、自检、简报设置和封面管理 |
+| 按钮主面板 | 私聊集中查看报告、状态、记录、自检、简报设置和封面管理，并可跳转主SlowLink网页 |
 | 双目标简报 | 日报、周报和月报可独立发送到报表群与频道，分别置顶、记录和重试 |
 | 简报开关 | 群和频道可分别开启或关闭日报、周报、月报，设置重启后保留 |
 | 固定报表封面 | 通过按钮上传一次后复用于全部定时报表，并在私聊生成真实数据预览 |

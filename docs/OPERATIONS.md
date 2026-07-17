@@ -1,6 +1,6 @@
 # 运维说明
 
-当前版本：`0.1.32`
+当前版本：`0.1.33`
 
 ## 统一管理入口
 
@@ -225,8 +225,9 @@ curl -fsSL https://raw.githubusercontent.com/suzijin876-lgtm/slowlink-assistant-
 - 报表群ID
 - 简报频道ID（可选，输入`0`停用）
 - 源频道ID
+- SlowLink面板地址（可选，输入`0`隐藏按钮）
 
-每项直接回车保留原值。脚本只替换这五项并保留其他`.env`设置，然后强制重建Assistant Bot容器以读取新配置。新配置启动失败时自动恢复旧配置；SQLite、备份、主SlowLink、Redis和watchdog不会被修改或重启。
+每项直接回车保留原值。脚本只替换这六项并保留其他`.env`设置，然后强制重建Assistant Bot容器以读取新配置。新配置启动失败时自动恢复旧配置；SQLite、备份、主SlowLink、Redis和watchdog不会被修改或重启。
 
 简报频道中的Bot需要保持管理员身份，并拥有：
 

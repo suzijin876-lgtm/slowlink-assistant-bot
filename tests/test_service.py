@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from assistant_bot import __version__
 from assistant_bot.config import BotConfig
+from assistant_bot.menu import cover_panel_keyboard
 from assistant_bot.reports import scheduled_period
 from assistant_bot.service import AssistantService
 from assistant_bot.store import EventStore
@@ -117,6 +118,7 @@ def make_config():
         owner_user_id=42,
         report_chat_id="-1009",
         source_channel_refs=frozenset({"-1001", "@source"}),
+        slowlink_panel_url="https://slowlink.example/",
         data_path=":memory:",
         timezone="Asia/Shanghai",
         poll_timeout=1,
@@ -894,6 +896,9 @@ class AssistantServiceTests(unittest.TestCase):
             keyboard,
             [
                 [
+                    {"text": "🌐SlowLink", "url": "https://slowlink.example/"},
+                ],
+                [
                     {"text": "📊当前报告", "callback_data": "menu:report"},
                     {"text": "✅运行状态", "callback_data": "menu:status"},
                 ],
@@ -930,7 +935,7 @@ class AssistantServiceTests(unittest.TestCase):
         repository_version = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
         self.assertEqual(__version__, repository_version)
         keyboard = self.api.sent_reply_markups[0]["inline_keyboard"]
-        self.assertEqual([len(row) for row in keyboard], [2, 2, 2])
+        self.assertEqual([len(row) for row in keyboard], [1, 2, 2, 2])
 
     def test_private_panel_edits_one_message_and_returns_home(self):
         self.make_service()
@@ -944,13 +949,21 @@ class AssistantServiceTests(unittest.TestCase):
             for row in self.api.edited[-1][3]["inline_keyboard"]
             for button in row
         ]
-        self.assertEqual(labels, ["🔄刷新", "↩返回主面板"])
+        self.assertEqual(labels, ["🔄刷新", "↩返回"])
         self.assertEqual(self.api.answered_callbacks[-1][0], "callback-2000")
 
         self.send_callback("menu:home", update_id=2001)
 
         self.assertIn("SlowLink Assistant", self.api.edited[-1][2])
         self.assertIn("📊当前报告", [button["text"] for row in self.api.edited[-1][3]["inline_keyboard"] for button in row])
+
+    def test_cover_panel_uses_compact_two_column_rows(self):
+        keyboard = cover_panel_keyboard(True)["inline_keyboard"]
+
+        self.assertEqual(
+            [[button["text"] for button in row] for row in keyboard],
+            [["🖼更换", "👁预览"], ["⏸停用", "↩返回"]],
+        )
 
     def test_report_group_uses_owner_only_current_report_button(self):
         self.make_service()

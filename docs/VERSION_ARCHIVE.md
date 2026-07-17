@@ -1,6 +1,6 @@
 # 发布与归档
 
-当前版本：`0.1.32`
+当前版本：`0.1.33`
 
 ## GitHub Releases
 
@@ -21,7 +21,7 @@ SHA256SUMS.txt
 ## 历史记录
 
 - 所有版本功能说明统一保存在根目录`CHANGELOG.md`。
-- V0.1.0至V0.1.14的旧压缩包保存在开发机仓库外的`slowlink_assistant_bot_releases`目录。
+- V0.1.0至V0.1.14的旧压缩包保存在开发机仓库外的`releases/slowlink_assistant_bot_releases`目录。
 - 初始Git提交仍保留旧版本目录的完整历史，需要时可通过Git恢复。
 
 ## 发布规则

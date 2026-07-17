@@ -27,9 +27,12 @@ def main_menu_text() -> str:
     )
 
 
-def main_menu_keyboard() -> dict:
-    return {
-        "inline_keyboard": [
+def main_menu_keyboard(panel_url: str | None = None) -> dict:
+    rows = []
+    if panel_url:
+        rows.append([{"text": "🌐SlowLink", "url": panel_url}])
+    rows.extend(
+        [
             [
                 {"text": "📊当前报告", "callback_data": "menu:report"},
                 {"text": "✅运行状态", "callback_data": "menu:status"},
@@ -43,7 +46,8 @@ def main_menu_keyboard() -> dict:
                 {"text": "🖼封面管理", "callback_data": "menu:cover"},
             ],
         ]
-    }
+    )
+    return {"inline_keyboard": rows}
 
 
 def detail_keyboard(refresh_callback: str) -> dict:
@@ -51,7 +55,7 @@ def detail_keyboard(refresh_callback: str) -> dict:
         "inline_keyboard": [
             [
                 {"text": "🔄刷新", "callback_data": refresh_callback},
-                {"text": "↩返回主面板", "callback_data": "menu:home"},
+                {"text": "↩返回", "callback_data": "menu:home"},
             ]
         ]
     }
@@ -100,7 +104,7 @@ def report_settings_keyboard(enabled: Mapping[tuple[str, str], bool], channel_co
         ]
     else:
         rows = [_settings_row("group", enabled)]
-    rows.append([{"text": "↩返回主面板", "callback_data": "menu:home"}])
+    rows.append([{"text": "↩返回", "callback_data": "menu:home"}])
     return {"inline_keyboard": rows}
 
 
@@ -131,13 +135,19 @@ def cover_panel_text(enabled: bool) -> str:
 def cover_panel_keyboard(enabled: bool) -> dict:
     rows = [
         [
-            {"text": "🖼更换封面", "callback_data": "cover:upload"},
+            {"text": "🖼更换", "callback_data": "cover:upload"},
             {"text": "👁预览", "callback_data": "cover:preview"},
         ]
     ]
     if enabled:
-        rows.append([{"text": "停用封面", "callback_data": "cover:off"}])
-    rows.append([{"text": "↩返回主面板", "callback_data": "menu:home"}])
+        rows.append(
+            [
+                {"text": "⏸停用", "callback_data": "cover:off"},
+                {"text": "↩返回", "callback_data": "menu:home"},
+            ]
+        )
+    else:
+        rows.append([{"text": "↩返回", "callback_data": "menu:home"}])
     return {"inline_keyboard": rows}
 
 
@@ -150,7 +160,7 @@ def cover_upload_keyboard() -> dict:
         "inline_keyboard": [
             [
                 {"text": "取消", "callback_data": "cover:cancel"},
-                {"text": "↩返回主面板", "callback_data": "menu:home"},
+                {"text": "↩返回", "callback_data": "menu:home"},
             ]
         ]
     }

@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Any
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -112,12 +113,23 @@ def _float_value(
     return value
 
 
+def _optional_http_url(values: Mapping[str, str], name: str) -> str | None:
+    value = str(values.get(name) or "").strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ConfigError(f"{name} 必须是有效的 http 或 https 地址")
+    return value
+
+
 @dataclass(frozen=True)
 class BotConfig:
     bot_token: str
     owner_user_id: int
     report_chat_id: str
     source_channel_refs: frozenset[str]
+    slowlink_panel_url: str | None = None
     report_channel_id: str | None = None
     data_path: str = "data/assistant.sqlite3"
     timezone: str = "Asia/Shanghai"
@@ -165,6 +177,7 @@ class BotConfig:
             owner_user_id=owner_user_id,
             report_chat_id=report_chat_id,
             source_channel_refs=source_channel_refs,
+            slowlink_panel_url=_optional_http_url(values, "SLOWLINK_PANEL_URL"),
             report_channel_id=report_channel_id,
             data_path=str(values.get("DATA_PATH") or "data/assistant.sqlite3"),
             timezone=timezone,

@@ -69,17 +69,19 @@ class DistributionScriptTests(unittest.TestCase):
         text = self.read_required("install.sh")
 
         for fragment in (
-            "[1/5]机器人Token",
+            "[1/6]机器人Token",
             "从@BotFather获取",
             "输入内容会显示",
-            "[2/5]主人用户ID",
+            "[2/6]主人用户ID",
             "你自己的Telegram数字ID",
-            "[3/5]报表群ID",
+            "[3/6]报表群ID",
             "接收日报、周报和月报",
-            "[4/5]简报频道ID",
+            "[4/6]简报频道ID",
             "直接回车则不向频道发送简报",
-            "[5/5]源频道ID",
+            "[5/6]源频道ID",
             "多个用英文逗号分隔",
+            "[6/6]SlowLink面板地址",
+            "直接回车则不显示跳转按钮",
         ):
             self.assertIn(fragment, text)
         self.assertNotIn("stty -echo", text)
@@ -144,6 +146,7 @@ if validate_source_refs "-1001234567890,1"; then exit 14; fi
         for fragment in (
             "configure_existing",
             "机器人Token（已配置，直接回车保留",
+            "SlowLink面板地址（可选）",
             "write_updated_env",
             'install -m 600 "$NEW_ENV" "$INSTALL_DIR/.env.next"',
             'mv -f "$INSTALL_DIR/.env.next" "$INSTALL_DIR/.env"',
@@ -167,6 +170,7 @@ OWNER_USER_ID_VALUE="222"
 REPORT_CHAT_ID_VALUE="-100222"
 REPORT_CHANNEL_ID_VALUE="-100444"
 SOURCE_CHANNEL_IDS_VALUE="-100333,@new_source"
+SLOWLINK_PANEL_URL_VALUE="https://new.example/"
 write_updated_env "$INPUT_ENV" "$OUTPUT_ENV"
 '''
 
@@ -187,6 +191,7 @@ write_updated_env "$INPUT_ENV" "$OUTPUT_ENV"
                 "REPORT_CHAT_ID=-100111\n"
                 "REPORT_CHANNEL_ID=-100111\n"
                 "SOURCE_CHANNEL_IDS=-100111\n"
+                "SLOWLINK_PANEL_URL=https://old.example/\n"
                 "POLL_TIMEOUT=99\n"
                 "CUSTOM_SETTING=keep_me\n",
                 encoding="utf-8",
@@ -209,6 +214,7 @@ write_updated_env "$INPUT_ENV" "$OUTPUT_ENV"
                 "REPORT_CHAT_ID=-100222",
                 "REPORT_CHANNEL_ID=-100444",
                 "SOURCE_CHANNEL_IDS=-100333,@new_source",
+                "SLOWLINK_PANEL_URL=https://new.example/",
                 "POLL_TIMEOUT=99",
                 "CUSTOM_SETTING=keep_me",
             ],

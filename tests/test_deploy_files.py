@@ -15,6 +15,7 @@ class DeployFileTests(unittest.TestCase):
         text = Path(".env.example").read_text(encoding="utf-8")
 
         self.assertIn("REPORT_CHANNEL_ID=", text)
+        self.assertIn("SLOWLINK_PANEL_URL=", text)
         self.assertIn("optional", text.lower())
 
     def test_dockerignore_keeps_build_context_small(self):
