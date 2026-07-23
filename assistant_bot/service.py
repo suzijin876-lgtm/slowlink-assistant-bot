@@ -18,7 +18,6 @@ from .menu import (
     cover_upload_keyboard,
     cover_upload_text,
     detail_keyboard,
-    group_menu_keyboard,
     group_report_keyboard,
     main_menu_keyboard,
     main_menu_text,
@@ -424,10 +423,8 @@ class AssistantService:
             self._answer_callback(callback_id, "操作无效", show_alert=True)
             return
         action = data.split(":", 1)[1]
-        if action == "report":
+        if action in {"report", "home"}:
             text, keyboard = self.current_report_text(include_diagnostics=False), group_report_keyboard()
-        elif action == "home":
-            text, keyboard = self.group_ready_text(), group_menu_keyboard()
         else:
             self._answer_callback(callback_id, "操作无效", show_alert=True)
             return
@@ -901,15 +898,8 @@ class AssistantService:
         command = text.split()[0].split("@")[0].lower()
         target_chat = chat_ref_for_api(chat_id)
         response = None
-        if command == "/report":
+        if command in {"/start", "/help", "/id", "/report"}:
             response = self.send_current_report(target_chat, reply_markup=group_report_keyboard())
-        elif command in {"/start", "/help", "/id"}:
-            response = self.api.send_message(
-                target_chat,
-                self.group_ready_text(),
-                disable_web_page_preview=True,
-                reply_markup=group_menu_keyboard(),
-            )
         self._schedule_group_reply_cleanup(target_chat, response)
 
     def _handle_chat_member(self, update: dict[str, Any]) -> None:
@@ -982,9 +972,6 @@ class AssistantService:
                 main_menu_text(),
                 reply_markup=main_menu_keyboard(self.config.slowlink_panel_url),
             )
-
-    def group_ready_text(self) -> str:
-        return "✅此群已配置完成"
 
     def help_text(self) -> str:
         return main_menu_text()

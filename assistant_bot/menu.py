@@ -61,16 +61,11 @@ def detail_keyboard(refresh_callback: str) -> dict:
     }
 
 
-def group_menu_keyboard() -> dict:
-    return {"inline_keyboard": [[{"text": "📊当前报告", "callback_data": "group:report"}]]}
-
-
 def group_report_keyboard() -> dict:
     return {
         "inline_keyboard": [
             [
                 {"text": "🔄刷新", "callback_data": "group:report"},
-                {"text": "↩返回", "callback_data": "group:home"},
             ]
         ]
     }

@@ -1036,7 +1036,7 @@ class AssistantServiceTests(unittest.TestCase):
             [["🖼更换", "👁预览"], ["⏸停用", "↩返回"]],
         )
 
-    def test_report_group_uses_owner_only_current_report_button(self):
+    def test_report_group_panel_only_has_refresh_and_legacy_home_keeps_report(self):
         self.make_service()
         group = {"id": -1009, "type": "supergroup", "title": "Report Group"}
         self.service.handle_update({
@@ -1049,11 +1049,25 @@ class AssistantServiceTests(unittest.TestCase):
             },
         })
 
+        self.assertIn("当前概览", self.api.sent[0][1])
+        self.assertNotIn("此群已配置完成", self.api.sent[0][1])
         keyboard = self.api.sent_reply_markups[0]["inline_keyboard"]
-        self.assertEqual(keyboard, [[{"text": "📊当前报告", "callback_data": "group:report"}]])
+        self.assertEqual(keyboard, [[{"text": "🔄刷新", "callback_data": "group:report"}]])
 
         self.send_callback("group:report", chat_id=-1009, chat_type="supergroup", update_id=2002)
         self.assertIn("当前概览", self.api.edited[-1][2])
+        self.assertEqual(
+            self.api.edited[-1][3]["inline_keyboard"],
+            [[{"text": "🔄刷新", "callback_data": "group:report"}]],
+        )
+
+        self.send_callback("group:home", chat_id=-1009, chat_type="supergroup", update_id=2003)
+        self.assertIn("当前概览", self.api.edited[-1][2])
+        self.assertNotIn("此群已配置完成", self.api.edited[-1][2])
+        self.assertEqual(
+            self.api.edited[-1][3]["inline_keyboard"],
+            [[{"text": "🔄刷新", "callback_data": "group:report"}]],
+        )
 
         edit_count = len(self.api.edited)
         self.send_callback(
@@ -1061,7 +1075,7 @@ class AssistantServiceTests(unittest.TestCase):
             user_id=99,
             chat_id=-1009,
             chat_type="supergroup",
-            update_id=2003,
+            update_id=2004,
         )
         self.assertEqual(len(self.api.edited), edit_count)
         self.assertEqual(self.api.answered_callbacks[-1][1], "无权限")
@@ -1350,24 +1364,30 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertTrue(all("周期简报" in photo[2] for photo in self.api.photos))
         self.assertEqual({chat_id for chat_id, _, _ in self.api.photos}, {-1009, -1008})
 
-    def test_report_group_id_command_confirms_configuration_without_exposing_id(self):
+    def test_report_group_commands_all_show_current_report(self):
         self.make_service()
 
-        self.service.handle_update({
-            "update_id": 34,
-            "message": {
-                "message_id": 1,
-                "chat": {"id": -1009, "type": "supergroup", "title": "Report Group"},
-                "from": {"id": 42},
-                "text": "/id",
-            },
-        })
+        for index, command in enumerate(("/start", "/help", "/id", "/report"), start=1):
+            self.service.handle_update({
+                "update_id": 40 + index,
+                "message": {
+                    "message_id": index,
+                    "chat": {"id": -1009, "type": "supergroup", "title": "Report Group"},
+                    "from": {"id": 42},
+                    "text": command,
+                },
+            })
 
-        self.assertEqual(len(self.api.sent), 1)
-        self.assertEqual(self.api.sent[0][0], -1009)
-        self.assertIn("此群已配置完成", self.api.sent[0][1])
-        self.assertNotIn("-1009", self.api.sent[0][1])
-        self.assertNotIn("ID", self.api.sent[0][1])
+        self.assertEqual(len(self.api.sent), 4)
+        for sent, reply_markup in zip(self.api.sent, self.api.sent_reply_markups):
+            self.assertEqual(sent[0], -1009)
+            self.assertIn("当前概览", sent[1])
+            self.assertNotIn("此群已配置完成", sent[1])
+            self.assertNotIn("-1009", sent[1])
+            self.assertEqual(
+                reply_markup["inline_keyboard"],
+                [[{"text": "🔄刷新", "callback_data": "group:report"}]],
+            )
 
     def test_daily_weekly_monthly_are_not_manual_commands(self):
         self.make_service()
