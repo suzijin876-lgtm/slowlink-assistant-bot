@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable, Any
@@ -58,6 +59,7 @@ MODERATION_DELETE_DELAY = timedelta(minutes=1)
 MODERATION_POST_MAX_AGE = timedelta(hours=1)
 MODERATION_AUTO_DELETE_LIMIT = 4
 MODERATION_AUTO_DELETE_WINDOW = timedelta(minutes=10)
+GROUP_COMMAND_REPLY_DELETE_DELAY_SECONDS = 45
 OWNER_REPLY_DELETE_COMMANDS = {"删", "删除", "已删除"}
 TELEGRAM_POST_LINK_RE = re.compile(
     r"https://(?:"
@@ -448,7 +450,12 @@ class AssistantService:
         except Exception as exc:
             if "message is not modified" in str(exc).lower():
                 return
-            self.api.send_message(chat_id, text, disable_web_page_preview=True, reply_markup=keyboard)
+            response = self.api.send_message(chat_id, text, disable_web_page_preview=True, reply_markup=keyboard)
+            if (
+                str(chat.get("type") or "") in {"group", "supergroup"}
+                and normalize_chat_ref(chat) == self.config.report_chat_id
+            ):
+                self._schedule_group_reply_cleanup(chat_id, response)
 
     @staticmethod
     def _report_enabled_state_key(role: str, kind: str) -> str:
@@ -740,6 +747,30 @@ class AssistantService:
         if chat_type == "private":
             if user_id != self.config.owner_user_id:
                 return
+            command_text = text
+            caption_command = False
+            if not command_text:
+                caption = str(message.get("caption") or "").strip()
+                command = ""
+                if caption.startswith("/"):
+                    command = caption.split()[0].split("@")[0].lower()
+                if command == "/cover":
+                    command_text = caption
+                    caption_command = True
+            if command_text.startswith("/"):
+                command = command_text.split()[0].split("@")[0].lower()
+                if caption_command:
+                    try:
+                        self._handle_cover_command(message, command_text)
+                    finally:
+                        self._delete_command_message(message)
+                else:
+                    self._delete_command_message(message)
+                    if command == "/cover":
+                        self._handle_cover_command(message, command_text)
+                    else:
+                        self._handle_owner_command(command_text)
+                return
             if message.get("photo") and self.cover_upload_deadline is not None:
                 if self._now() <= self.cover_upload_deadline:
                     self._save_cover_photo(message)
@@ -747,21 +778,6 @@ class AssistantService:
                 self.cover_upload_deadline = None
             if text in OWNER_REPLY_DELETE_COMMANDS:
                 self._handle_owner_reply_action(message, text)
-                return
-            command_text = text
-            if not command_text:
-                caption = str(message.get("caption") or "").strip()
-                caption_command = ""
-                if caption.startswith("/"):
-                    caption_command = caption.split()[0].split("@")[0].lower()
-                if caption_command == "/cover":
-                    command_text = caption
-            if command_text.startswith("/"):
-                command = command_text.split()[0].split("@")[0].lower()
-                if command == "/cover":
-                    self._handle_cover_command(message, command_text)
-                else:
-                    self._handle_owner_command(command_text)
             return
 
         if chat_type in {"group", "supergroup"}:
@@ -770,11 +786,40 @@ class AssistantService:
                 self._leave_unauthorized_chat(chat, chat_id)
                 return
             if chat_id == self.config.report_chat_id:
+                if user_id == self.config.owner_user_id and text.startswith("/"):
+                    self._delete_command_message(message)
                 self._handle_report_group_command(chat_id, user_id, text)
+
+    def _delete_command_message(self, message: dict[str, Any]) -> None:
+        chat_id = chat_ref_for_api(normalize_chat_ref(message.get("chat") or {}))
+        message_id = int(message.get("message_id") or 0)
+        self._delete_message_safely(chat_id, message_id, "命令消息")
+
+    def _delete_message_safely(self, chat_id, message_id: int, label: str) -> None:
+        if not chat_id or not message_id:
+            return
+        try:
+            self.api.delete_message(chat_id, message_id)
+        except Exception as exc:
+            LOG.warning("%s清理失败：聊天=%s 消息=%s 原因=%s", label, chat_id, message_id, exc)
+
+    def _schedule_group_reply_cleanup(self, chat_id, response) -> None:
+        if not isinstance(response, dict):
+            return
+        message_id = int(response.get("message_id") or 0)
+        if not message_id:
+            return
+        timer = threading.Timer(
+            GROUP_COMMAND_REPLY_DELETE_DELAY_SECONDS,
+            lambda: self._delete_message_safely(chat_id, message_id, "群聊临时回复"),
+        )
+        timer.daemon = True
+        timer.start()
 
     def _handle_cover_command(self, message: dict[str, Any], text: str) -> None:
         parts = text.split()
         if len(parts) > 1 and parts[1].lower() == "off":
+            self.cover_upload_deadline = None
             self.store.delete_state(REPORT_COVER_STATE_KEY)
             self.api.send_message(
                 self.config.owner_user_id,
@@ -855,15 +900,17 @@ class AssistantService:
             return
         command = text.split()[0].split("@")[0].lower()
         target_chat = chat_ref_for_api(chat_id)
+        response = None
         if command == "/report":
-            self.send_current_report(target_chat, reply_markup=group_report_keyboard())
+            response = self.send_current_report(target_chat, reply_markup=group_report_keyboard())
         elif command in {"/start", "/help", "/id"}:
-            self.api.send_message(
+            response = self.api.send_message(
                 target_chat,
                 self.group_ready_text(),
                 disable_web_page_preview=True,
                 reply_markup=group_menu_keyboard(),
             )
+        self._schedule_group_reply_cleanup(target_chat, response)
 
     def _handle_chat_member(self, update: dict[str, Any]) -> None:
         chat = update.get("chat") or {}
@@ -1143,10 +1190,10 @@ class AssistantService:
             )
         return "\n".join(lines)
 
-    def send_current_report(self, chat_id=None, reply_markup=None) -> None:
+    def send_current_report(self, chat_id=None, reply_markup=None):
         target_chat = self.config.owner_user_id if chat_id is None else chat_id
         include_diagnostics = str(target_chat) == str(self.config.owner_user_id)
-        self.api.send_message(
+        return self.api.send_message(
             target_chat,
             self.current_report_text(include_diagnostics=include_diagnostics),
             disable_web_page_preview=True,

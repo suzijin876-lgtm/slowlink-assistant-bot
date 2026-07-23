@@ -3,6 +3,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from assistant_bot import __version__
@@ -876,6 +877,76 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertNotIn("T", self.api.sent[0][1])
         self.assertNotIn("+08:00", self.api.sent[0][1])
 
+    def test_owner_private_command_is_deleted_but_bot_reply_is_kept(self):
+        self.make_service()
+
+        with patch("threading.Timer") as timer:
+            self.service.handle_update({
+                "update_id": 5,
+                "message": {
+                    "message_id": 41,
+                    "chat": {"id": 42, "type": "private"},
+                    "from": {"id": 42},
+                    "text": "/status",
+                },
+            })
+
+        self.assertEqual(self.api.deleted, [(42, 41)])
+        self.assertEqual(len(self.api.sent), 1)
+        self.assertIn("运行状态", self.api.sent[0][1])
+        timer.assert_not_called()
+
+    def test_private_photo_caption_command_is_processed_before_deletion(self):
+        self.make_service()
+        self.store.set_state("scheduled_report_cover_file_id", "old-cover")
+        self.service.cover_upload_deadline = datetime(2026, 7, 10, 12, 10, tzinfo=TZ)
+        events = []
+        original_handler = self.service._handle_cover_command
+        original_delete = self.api.delete_message
+
+        def handle_cover(message, text):
+            original_handler(message, text)
+            events.append("processed")
+
+        def delete_message(chat_id, message_id):
+            events.append("deleted")
+            return original_delete(chat_id, message_id)
+
+        self.service._handle_cover_command = handle_cover
+        self.api.delete_message = delete_message
+        self.service.handle_update({
+            "update_id": 6,
+            "message": {
+                "message_id": 42,
+                "chat": {"id": 42, "type": "private"},
+                "from": {"id": 42},
+                "caption": "/cover off",
+                "photo": [{"file_id": "cover", "width": 1280, "height": 720}],
+            },
+        })
+
+        self.assertIsNone(self.store.get_state("scheduled_report_cover_file_id"))
+        self.assertEqual(events, ["processed", "deleted"])
+        self.assertEqual(self.api.deleted, [(42, 42)])
+
+    def test_command_delete_failure_only_logs_warning(self):
+        self.make_service()
+        self.api.fail_delete = True
+
+        with self.assertLogs("assistant_bot.service", level="WARNING") as captured:
+            self.service.handle_update({
+                "update_id": 7,
+                "message": {
+                    "message_id": 43,
+                    "chat": {"id": 42, "type": "private"},
+                    "from": {"id": 42},
+                    "text": "/status",
+                },
+            })
+
+        self.assertEqual(len(self.api.sent), 1)
+        self.assertTrue(any("命令消息清理失败" in line and "消息=43" in line for line in captured.output))
+
     def test_start_opens_private_button_panel_without_command_list(self):
         self.make_service()
 
@@ -1158,6 +1229,126 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("转发：1条", self.api.sent[0][1])
         self.assertIn("较昨日同期：暂无可比数据", self.api.sent[0][1])
         self.assertNotIn("较昨日同期：增加1条", self.api.sent[0][1])
+
+    def test_report_group_deletes_command_now_and_reply_after_45_seconds(self):
+        self.make_service()
+        timers = []
+        events = []
+        original_send = self.api.send_message
+        original_delete = self.api.delete_message
+
+        def send_message(chat_id, text, disable_web_page_preview=False, reply_markup=None):
+            events.append("reply-sent")
+            return original_send(chat_id, text, disable_web_page_preview, reply_markup)
+
+        def delete_message(chat_id, message_id):
+            events.append(f"deleted-{message_id}")
+            return original_delete(chat_id, message_id)
+
+        self.api.send_message = send_message
+        self.api.delete_message = delete_message
+
+        class RecordingTimer:
+            def __init__(self, interval, function):
+                self.interval = interval
+                self.function = function
+                self.daemon = False
+                self.started = False
+                timers.append(self)
+
+            def start(self):
+                self.started = True
+
+        with patch("threading.Timer", RecordingTimer):
+            self.service.handle_update({
+                "update_id": 35,
+                "message": {
+                    "message_id": 44,
+                    "chat": {"id": -1009, "type": "supergroup", "title": "Report Group"},
+                    "from": {"id": 42},
+                    "text": "/report",
+                },
+            })
+
+        self.assertEqual(events[:2], ["deleted-44", "reply-sent"])
+        self.assertEqual(self.api.deleted, [(-1009, 44)])
+        self.assertEqual(len(timers), 1)
+        self.assertEqual(timers[0].interval, 45)
+        self.assertTrue(timers[0].daemon)
+        self.assertTrue(timers[0].started)
+
+        timers[0].function()
+
+        self.assertEqual(self.api.deleted, [(-1009, 44), (-1009, 101)])
+
+    def test_group_panel_fallback_reply_is_deleted_after_45_seconds(self):
+        self.make_service()
+        timers = []
+
+        class RecordingTimer:
+            def __init__(self, interval, function):
+                self.interval = interval
+                self.function = function
+                self.daemon = False
+                self.started = False
+                timers.append(self)
+
+            def start(self):
+                self.started = True
+
+        with patch("threading.Timer", RecordingTimer):
+            self.service.handle_update({
+                "update_id": 36,
+                "message": {
+                    "message_id": 45,
+                    "chat": {"id": -1009, "type": "supergroup", "title": "Report Group"},
+                    "from": {"id": 42},
+                    "text": "/start",
+                },
+            })
+
+            def fail_edit(*args, **kwargs):
+                raise RuntimeError("edit failed")
+
+            self.api.edit_message_text = fail_edit
+            self.send_callback(
+                "group:report",
+                chat_id=-1009,
+                chat_type="supergroup",
+                message_id=101,
+                update_id=2004,
+            )
+
+        self.assertEqual(len(timers), 2)
+        self.assertEqual(timers[1].interval, 45)
+        self.assertTrue(timers[1].daemon)
+        self.assertTrue(timers[1].started)
+
+        timers[1].function()
+
+        self.assertEqual(self.api.deleted[-1], (-1009, 102))
+
+    def test_scheduled_reports_are_never_added_to_command_cleanup(self):
+        self.make_service_with_report_channel()
+        self.store.set_state("scheduled_report_cover_file_id", "cover-file-id")
+        timers = []
+
+        class RecordingTimer:
+            def __init__(self, interval, function):
+                timers.append((interval, function))
+
+            def start(self):
+                pass
+
+        with patch("threading.Timer", RecordingTimer):
+            self.service.run_due_reports(datetime(2026, 7, 13, 0, 0, tzinfo=TZ))
+
+        self.assertEqual(timers, [])
+        self.assertEqual(self.api.deleted, [])
+        self.assertEqual(self.api.sent, [])
+        self.assertEqual(len(self.api.photos), 2)
+        self.assertTrue(all("周期简报" in photo[2] for photo in self.api.photos))
+        self.assertEqual({chat_id for chat_id, _, _ in self.api.photos}, {-1009, -1008})
 
     def test_report_group_id_command_confirms_configuration_without_exposing_id(self):
         self.make_service()
